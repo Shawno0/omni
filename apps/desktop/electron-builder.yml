@@ -1,0 +1,25 @@
+appId: com.omnicontext.desktop
+productName: OmniContext
+protocols:
+  - name: OmniContext Link
+    schemes:
+      - omnicontext
+files:
+  - dist/**
+  - src/renderer/**
+  - preload.cjs
+  - vendor/**
+  - package.json
+asarUnpack:
+  - vendor/**
+directories:
+  output: out
+win:
+  signAndEditExecutable: false
+  target:
+    - nsis
+  artifactName: OmniContext-${version}-setup.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

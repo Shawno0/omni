@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OmniContext</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+
+      <!-- ============================================================= -->
+      <!-- SIDEBAR                                                        -->
+      <!-- ============================================================= -->
+      <aside id="sidebar" class="sidebar">
+        <!-- Header -->
+        <div class="sidebar-head">
+          <div class="sidebar-title-block">
+            <div class="sidebar-logo" aria-hidden="true">O</div>
+            <h1>OmniContext</h1>
+            <p>Agentic Workspace Supervisor</p>
+          </div>
+          <div class="sidebar-head-actions">
+            <select id="theme-select" aria-label="Theme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <button id="sidebar-toggle" class="btn-icon" aria-label="Collapse sidebar" title="Toggle sidebar">⊟</button>
+          </div>
+        </div>
+
+        <!-- New Workspace Form -->
+        <div class="toolbar">
+          <input id="project-path" placeholder="Project path  (e.g. C:\src\my-app)" />
+          <div class="create-row">
+            <input id="workspace-name" placeholder="Session name (optional)" />
+            <button id="create-workspace" class="btn-primary">+ New</button>
+          </div>
+        </div>
+
+        <!-- Search & Filter -->
+        <div class="filters">
+          <input id="workspace-search" placeholder="Search workspaces..." />
+          <select id="workspace-sort" aria-label="Sort workspaces">
+            <option value="recent">Recent</option>
+            <option value="name">Name</option>
+            <option value="status">Status</option>
+            <option value="favorites">Favorites</option>
+          </select>
+        </div>
+
+        <!-- Workspace List -->
+        <ul id="workspace-list" class="workspace-list"></ul>
+
+        <!-- Sidebar Bottom Sections -->
+        <div class="sidebar-sections">
+          <!-- Settings -->
+          <section class="panel-card collapsed" data-card-id="settings">
+            <button class="panel-card-header" data-card-toggle="settings" aria-expanded="false">
+              <h2>Settings</h2>
+              <span class="panel-card-chevron">▾</span>
+            </button>
+            <div class="panel-card-body" data-card-body="settings">
+              <div class="settings-grid">
+                <label>
+                  Palette Key
+                  <input id="setting-palette-key" maxlength="1" placeholder="k" />
+                </label>
+                <label>
+                  Restart Key
+                  <input id="setting-restart-key" maxlength="1" placeholder="r" />
+                </label>
+              </div>
+              <div class="settings-actions">
+                <button id="save-settings" class="btn-primary">Save</button>
+                <button id="reset-settings" class="ghost">Reset</button>
+              </div>
+              <p id="settings-status" class="settings-status">Ctrl/Cmd + key shortcuts.</p>
+            </div>
+          </section>
+
+          <!-- BYOK Keys -->
+          <section class="panel-card collapsed" data-card-id="byok-keys">
+            <button class="panel-card-header" data-card-toggle="byok-keys" aria-expanded="false">
+              <h2>API Keys</h2>
+              <span class="panel-card-chevron">▾</span>
+            </button>
+            <div class="panel-card-body" data-card-body="byok-keys">
+              <div class="key-grid">
+                <div class="key-row">
+                  <label>
+                    OpenAI
+                    <input id="openai-key" type="password" placeholder="sk-..." />
+                  </label>
+                  <button id="save-openai" class="btn-secondary">Save</button>
+                  <button id="delete-openai" class="ghost danger">Del</button>
+                </div>
+                <div class="key-row">
+                  <label>
+                    Anthropic
+                    <input id="anthropic-key" type="password" placeholder="sk-ant-..." />
+                  </label>
+                  <button id="save-anthropic" class="btn-secondary">Save</button>
+                  <button id="delete-anthropic" class="ghost danger">Del</button>
+                </div>
+              </div>
+              <ul id="key-list" class="key-list"></ul>
+            </div>
+          </section>
+        </div>
+      </aside>
+
+      <!-- ============================================================= -->
+      <!-- MAIN WORKSPACE                                                 -->
+      <!-- ============================================================= -->
+      <main class="workspace-shell">
+        <!-- Header Bar -->
+        <header class="workspace-header">
+          <div style="display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag">
+            <button id="workspace-sidebar-toggle" class="btn-icon" aria-label="Toggle sidebar" title="Toggle sidebar">☰</button>
+            <h2 id="workspace-title">OmniContext</h2>
+          </div>
+          <div class="workspace-header-actions">
+            <button id="quick-actions-button" class="ghost" title="Ctrl/Cmd+K">⌘K</button>
+            <button id="workspace-focus-toggle" class="ghost" aria-label="Toggle focus mode">Focus</button>
+          </div>
+        </header>
+
+        <!-- Session Tabs -->
+        <section id="session-tabs" class="session-tabs" aria-label="Session tabs"></section>
+
+        <!-- Workspace Stage (IDE + Browser) -->
+        <section class="workspace-stage">
+          <div id="workspace-grid" class="workspace-grid hidden">
+            <div class="surface-pane surface-ide">
+              <div class="surface-head">IDE</div>
+              <iframe id="ide-frame" class="surface-frame" title="IDE"></iframe>
+            </div>
+            <div
+              id="surface-splitter"
+              class="surface-splitter"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize IDE and Browser panels"
+              tabindex="0"
+            ></div>
+            <div class="surface-pane surface-browser">
+              <div class="surface-head">Preview</div>
+              <iframe id="app-frame" class="surface-frame" title="Browser"></iframe>
+            </div>
+          </div>
+          <div id="workspace-empty" class="workspace-empty visible">
+            <div class="workspace-empty-icon">⎔</div>
+            <h3>No workspace open</h3>
+            <p>Create a new workspace or select one from the sidebar to start coding.</p>
+          </div>
+        </section>
+
+        <!-- Bottom Panel (Tabbed: Terminal | Diagnostics | Protocol | Activity | Restore) -->
+        <section class="bottom-panel">
+          <nav class="bottom-panel-tabs">
+            <button class="bottom-panel-tab active" data-tab="terminal">Terminal</button>
+            <button class="bottom-panel-tab" data-tab="diagnostics">Diagnostics</button>
+            <button class="bottom-panel-tab" data-tab="protocol">Protocol</button>
+            <button class="bottom-panel-tab" data-tab="activity">Activity</button>
+            <button class="bottom-panel-tab" data-tab="restore">Restore</button>
+          </nav>
+
+          <!-- Terminal Tab -->
+          <div class="bottom-tab-content active" data-tab-content="terminal">
+            <div class="terminal-controls">
+              <input id="terminal-input" placeholder="Enter command..." />
+              <button id="terminal-run" class="btn-secondary">Run</button>
+            </div>
+            <pre id="terminal-output">No terminal output yet.</pre>
+          </div>
+
+          <!-- Diagnostics Tab -->
+          <div class="bottom-tab-content" data-tab-content="diagnostics">
+            <div id="workspace-status" class="workspace-status">Select or create a workspace to begin.</div>
+            <pre id="diagnostics">No workspace selected.</pre>
+          </div>
+
+          <!-- Protocol Tab -->
+          <div class="bottom-tab-content" data-tab-content="protocol">
+            <div class="diagnostics-filters">
+              <select id="protocol-workspace-filter" aria-label="Filter by workspace">
+                <option value="all">All Workspaces</option>
+              </select>
+              <select id="protocol-severity-filter" aria-label="Filter by severity">
+                <option value="all">All Severity</option>
+                <option value="error">Errors</option>
+                <option value="warning">Warnings</option>
+                <option value="info">Info</option>
+              </select>
+            </div>
+            <pre id="protocol-diagnostics">No protocol events captured.</pre>
+          </div>
+
+          <!-- Activity Tab -->
+          <div class="bottom-tab-content" data-tab-content="activity">
+            <pre id="activity-diagnostics">No activity samples captured.</pre>
+          </div>
+
+          <!-- Restore Tab -->
+          <div class="bottom-tab-content" data-tab-content="restore">
+            <pre id="restore-diagnostics">No restore diagnostics available.</pre>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Quick Actions Overlay -->
+    <div id="quick-actions-overlay" class="quick-overlay hidden" role="dialog" aria-modal="true" aria-label="Quick actions">
+      <div class="quick-card">
+        <input id="quick-actions-search" placeholder="Type an action or workspace..." />
+        <ul id="quick-actions-list" class="quick-list"></ul>
+      </div>
+    </div>
+
+    <script src="./renderer.js" defer></script>
+    <script>
+      (() => {
+        const applyTheme = (theme) => {
+          if (theme === "system") {
+            document.documentElement.removeAttribute("data-theme");
+          } else {
+            document.documentElement.setAttribute("data-theme", theme);
+          }
+        };
+
+        const bindFallback = () => {
+          if (window.__omniRendererInitialized) {
+            return;
+          }
+
+          const themeSelect = document.getElementById("theme-select");
+          const createButton = document.getElementById("create-workspace");
+          const pathInput = document.getElementById("project-path");
+          const nameInput = document.getElementById("workspace-name");
+          const status = document.getElementById("workspace-status");
+
+          const setStatus = (text, isError) => {
+            if (!status) {
+              return;
+            }
+            status.textContent = text;
+            status.classList.toggle("error", Boolean(isError));
+          };
+
+          if (themeSelect) {
+            const initial = localStorage.getItem("omni-theme") || "system";
+            themeSelect.value = initial;
+            applyTheme(initial);
+            themeSelect.addEventListener("change", () => {
+              localStorage.setItem("omni-theme", themeSelect.value);
+              applyTheme(themeSelect.value);
+              setStatus("Theme updated (fallback mode).", false);
+            });
+          }
+
+          if (createButton && pathInput) {
+            createButton.addEventListener("click", async () => {
+              const bridge = window.omniAPI;
+              const projectPath = String(pathInput.value || "").trim();
+              const name = nameInput ? String(nameInput.value || "").trim() : "";
+
+              if (!projectPath) {
+                setStatus("Project path is required.", true);
+                alert("Project path is required.");
+                return;
+              }
+
+              if (!bridge || typeof bridge.createWorkspace !== "function") {
+                const message = "Desktop bridge unavailable in fallback mode.";
+                setStatus(message, true);
+                alert(message);
+                return;
+              }
+
+              try {
+                const created = await bridge.createWorkspace({
+                  projectPath,
+                  name: name || undefined,
+                });
+                setStatus(`Workspace created: ${created?.name || created?.id || "created"}`, false);
+                pathInput.value = "";
+                if (nameInput) {
+                  nameInput.value = "";
+                }
+              } catch (error) {
+                const message = error && typeof error === "object" && "message" in error
+                  ? `Failed to create workspace: ${String(error.message)}`
+                  : "Failed to create workspace.";
+                setStatus(message, true);
+                alert(message);
+              }
+            });
+          }
+
+          setStatus("Renderer initialization fallback active.", true);
+          document.body.setAttribute("data-fallback-bound", "true");
+        };
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", () => {
+            setTimeout(bindFallback, 150);
+          });
+        } else {
+          setTimeout(bindFallback, 150);
+        }
+      })();
+    </script>
+  </body>
+</html>

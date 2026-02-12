@@ -1,0 +1,90 @@
+{
+  "name": "code-server",
+  "license": "MIT",
+  "version": "4.108.2",
+  "description": "Run VS Code on a remote server.",
+  "homepage": "https://github.com/coder/code-server",
+  "bugs": {
+    "url": "https://github.com/coder/code-server/issues"
+  },
+  "repository": "https://github.com/coder/code-server",
+  "main": "out/node/entry.js",
+  "dependencies": {
+    "@coder/logger": "^3.0.1",
+    "@microsoft/1ds-core-js": "^3.2.18",
+    "@microsoft/1ds-post-js": "^3.2.18",
+    "@vscode/deviceid": "^0.1.4",
+    "@vscode/iconv-lite-umd": "^0.7.1",
+    "@vscode/proxy-agent": "^0.36.0",
+    "@vscode/ripgrep": "^1.17.0",
+    "@vscode/spdlog": "^0.15.7",
+    "@vscode/tree-sitter-wasm": "^0.3.0",
+    "@vscode/vscode-languagedetection": "^1.0.21",
+    "@vscode/watcher": "github:bpasero/watcher#8ecffb4a57df24ac3e6946aa095b9b1f14f8bba9",
+    "@vscode/windows-process-tree": "^0.6.3",
+    "@vscode/windows-registry": "^1.1.3",
+    "@xterm/addon-clipboard": "^0.3.0-beta.91",
+    "@xterm/addon-image": "^0.10.0-beta.91",
+    "@xterm/addon-ligatures": "^0.11.0-beta.91",
+    "@xterm/addon-progress": "^0.3.0-beta.91",
+    "@xterm/addon-search": "^0.17.0-beta.91",
+    "@xterm/addon-serialize": "^0.15.0-beta.91",
+    "@xterm/addon-unicode11": "^0.10.0-beta.91",
+    "@xterm/addon-webgl": "^0.20.0-beta.101",
+    "@xterm/headless": "^6.1.0-beta.91",
+    "@xterm/xterm": "^6.1.0-beta.91",
+    "argon2": "^0.44.0",
+    "compression": "^1.7.4",
+    "cookie-parser": "^1.4.6",
+    "env-paths": "^2.2.1",
+    "express": "^5.0.1",
+    "http-proxy": "^1.18.1",
+    "httpolyglot": "^0.1.2",
+    "https-proxy-agent": "^7.0.6",
+    "i18next": "^25.3.0",
+    "js-yaml": "^4.1.0",
+    "jschardet": "^3.1.4",
+    "katex": "^0.16.28",
+    "kerberos": "^2.1.1",
+    "limiter": "^2.1.0",
+    "minimist": "^1.2.8",
+    "native-watchdog": "^1.4.2",
+    "node-pty": "^1.1.0",
+    "pem": "^1.14.8",
+    "proxy-agent": "^6.3.1",
+    "qs": "6.14.1",
+    "rotating-file-stream": "^3.1.1",
+    "safe-compare": "^1.1.4",
+    "semver": "^7.5.4",
+    "tas-client": "^0.3.1",
+    "vscode-oniguruma": "^1.7.0",
+    "vscode-regexpp": "^3.1.0",
+    "vscode-textmate": "^9.3.2",
+    "ws": "^8.14.2",
+    "xdg-basedir": "^4.0.0",
+    "yauzl": "^3.2.0",
+    "yazl": "^2.5.1"
+  },
+  "resolutions": {
+    "@types/node": "22.x"
+  },
+  "bin": {
+    "code-server": "out/node/entry.js"
+  },
+  "keywords": [
+    "vscode",
+    "development",
+    "ide",
+    "coder",
+    "vscode-remote",
+    "browser-ide",
+    "remote-development"
+  ],
+  "engines": {
+    "node": "22"
+  },
+  "commit": "3c0b449c6e6e37b44a8a7938c0d8a3049926a64c",
+  "scripts": {
+    "postinstall": "sh ./postinstall.sh"
+  }
+}
