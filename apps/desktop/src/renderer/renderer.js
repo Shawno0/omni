@@ -19,8 +19,7 @@ window.__omniRendererInitialized = false;
     workspaceEmpty: el("workspace-empty"),
     workspaceTitle: el("workspace-title"),
     surfaceSplitter: el("surface-splitter"),
-    ideFrame: el("ide-frame"),
-    appFrame: el("app-frame"),
+    ideFrameContent: el("ide-frame-content"),
     diagnostics: el("diagnostics"),
     workspaceList: el("workspace-list"),
     projectPath: el("project-path"),
@@ -64,6 +63,7 @@ window.__omniRendererInitialized = false;
     browserAddressBar: el("browser-address-bar"),
     browserAddressInput: el("browser-address-input"),
     browserAddressGo: el("browser-address-go"),
+    browserDevtools: el("browser-devtools"),
   };
 
   /* ─── xterm.js Instances ──────────────────────────────────────────── */
@@ -186,9 +186,6 @@ window.__omniRendererInitialized = false;
   let activityEvents = [];
   let restoreEvents = [];
   let sidebarCollapsed = localStorage.getItem("omni-sidebar-collapsed") === "true";
-  let currentIdeSrc;
-  let currentAppSrc;
-  let usingAppSrcDoc = false;
   let terminalWorkspaceId;
   let currentTheme = localStorage.getItem("omni-theme") || "system";
   let pendingWorkspacesPayload = null;
@@ -201,7 +198,7 @@ window.__omniRendererInitialized = false;
   let browserTabCounter = 0;
   let activeBrowserTab = "preview";
   let browserTabs = [{ id: "preview", label: "Preview", closable: false }];
-  const workspaceBrowserTabs = new Map(); // workspaceId → { tabs, activeTab }
+  const wsFrames = new Map(); // workspaceId → per-workspace frame state
   let layoutMode = localStorage.getItem("omni-layout") || "overview"; // "overview" | "focused"
   let focusedSurface = localStorage.getItem("omni-focused-surface") || "ide"; // "ide" | "preview" | "terminal"
   let paletteShortcut = localStorage.getItem("omni-palette-key") || "k";
@@ -552,11 +549,11 @@ window.__omniRendererInitialized = false;
   };
 
   const showPreviewLoading = (port) => {
-    if (!elements.appFrame) return;
-    // Ensure the preview tab is visible when showing the loading spinner
+    const frame = getActivePreviewFrame();
+    if (!frame) return;
     switchBrowserTab("preview");
-    elements.appFrame.removeAttribute("src");
-    elements.appFrame.srcdoc = `<!doctype html><html><head><style>
+    frame.removeAttribute("src");
+    frame.srcdoc = `<!doctype html><html><head><style>
       body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh;
              font:14px system-ui; color:#8b95a8; background:#12151e; flex-direction:column; gap:12px; }
       .spinner { width:24px; height:24px; border:3px solid #2a2e38; border-top-color:#60a5fa;
@@ -564,7 +561,7 @@ window.__omniRendererInitialized = false;
       @keyframes spin { to { transform:rotate(360deg); } }
     </style></head><body>
       <div class="spinner"></div>
-      <div>Waiting for server on port ${port}…</div>
+      <div>Waiting for server on port ${port}\u2026</div>
       <div style="font-size:12px;color:#555a66;">Will auto-load when ready</div>
     </body></html>`;
   };
@@ -572,9 +569,9 @@ window.__omniRendererInitialized = false;
   const startAppPreviewWithRetry = (targetSrc, port) => {
     stopAppPreviewRetry();
     appPreviewTargetSrc = targetSrc;
+    const capturedWsId = selectedWorkspaceId; // capture for async safety
     showPreviewLoading(port);
 
-    // Try loading immediately first
     const tryLoad = async () => {
       try {
         const res = await fetch(targetSrc, { method: "HEAD" });
@@ -588,15 +585,14 @@ window.__omniRendererInitialized = false;
 
     const loadPreview = (src) => {
       stopAppPreviewRetry();
-      if (!elements.appFrame) return;
-      elements.appFrame.removeAttribute("srcdoc");
-      elements.appFrame.src = src;
+      const frame = wsFrames.get(capturedWsId)?.previewFrame;
+      if (!frame) return;
+      frame.removeAttribute("srcdoc");
+      frame.src = src;
     };
 
-    // First attempt
     tryLoad().then((ok) => {
       if (ok || appPreviewTargetSrc !== targetSrc) return;
-      // Poll every 2 seconds
       appPreviewRetryTimer = setInterval(async () => {
         if (appPreviewTargetSrc !== targetSrc) { stopAppPreviewRetry(); return; }
         await tryLoad();
@@ -604,58 +600,56 @@ window.__omniRendererInitialized = false;
     });
   };
 
+  /* ─── Per-Workspace Frame State ───────────────────────────────────── */
+  const getWsFrameState = (wsId) => {
+    if (wsFrames.has(wsId)) return wsFrames.get(wsId);
+
+    // Create IDE iframe (stays alive across workspace switches)
+    const ideFrame = document.createElement("iframe");
+    ideFrame.className = "ws-ide-frame";
+    ideFrame.dataset.workspaceId = wsId;
+    ideFrame.title = "IDE";
+    elements.ideFrameContent?.appendChild(ideFrame);
+
+    // Create preview iframe
+    const previewFrame = document.createElement("iframe");
+    previewFrame.className = "surface-frame browser-frame";
+    previewFrame.dataset.workspaceId = wsId;
+    previewFrame.dataset.tabId = "preview";
+    previewFrame.title = "App Preview";
+    elements.browserTabContent?.appendChild(previewFrame);
+
+    const state = {
+      ideFrame,
+      ideSrc: undefined,
+      previewFrame,
+      appSrc: undefined,
+      usingSrcDoc: false,
+      tabs: [{ id: "preview", label: "Preview", closable: false }],
+      activeTab: "preview",
+    };
+    wsFrames.set(wsId, state);
+    return state;
+  };
+
+  const getActivePreviewFrame = () => {
+    if (!selectedWorkspaceId) return null;
+    return wsFrames.get(selectedWorkspaceId)?.previewFrame || null;
+  };
+
   /* ─── Browser Tabs ────────────────────────────────────────────────── */
-  const saveBrowserTabsForWorkspace = (wsId) => {
-    if (!wsId) return;
-    const saved = [];
-    for (const tab of browserTabs) {
-      if (!tab.closable) continue; // preview is rebuilt per workspace
-      const iframe = getTabIframe(tab.id);
-      saved.push({ id: tab.id, label: tab.label, url: iframe?.src || "" });
-    }
-    workspaceBrowserTabs.set(wsId, { tabs: saved, activeTab: activeBrowserTab });
+  const getTabIframe = (tabId) => {
+    if (!selectedWorkspaceId) return null;
+    return elements.browserTabContent?.querySelector(
+      `iframe[data-workspace-id="${selectedWorkspaceId}"][data-tab-id="${tabId}"]`
+    );
   };
-
-  const restoreBrowserTabsForWorkspace = (wsId) => {
-    // Remove all existing custom iframes
-    for (const t of browserTabs.filter((t) => t.closable)) {
-      getTabIframe(t.id)?.remove();
-    }
-    browserTabs = browserTabs.filter((t) => !t.closable);
-
-    const saved = workspaceBrowserTabs.get(wsId);
-    if (saved && saved.tabs.length > 0) {
-      for (const entry of saved.tabs) {
-        browserTabCounter++;
-        const tabId = `tab-${browserTabCounter}`;
-        browserTabs.push({ id: tabId, label: entry.label, closable: true });
-        const iframe = document.createElement("iframe");
-        iframe.className = "surface-frame browser-frame";
-        iframe.dataset.tabId = tabId;
-        iframe.title = entry.label;
-        if (entry.url) iframe.src = entry.url;
-        elements.browserTabContent?.appendChild(iframe);
-      }
-      // Restore active tab — map old id to new id by index
-      const savedActiveIdx = saved.tabs.findIndex((t) => t.id === saved.activeTab);
-      const restoreTab = savedActiveIdx >= 0 ? browserTabs[savedActiveIdx + 1]?.id : "preview";
-      activeBrowserTab = restoreTab || "preview";
-    } else {
-      activeBrowserTab = "preview";
-    }
-    renderBrowserTabBar();
-    switchBrowserTab(activeBrowserTab);
-  };
-
-  const getTabIframe = (tabId) =>
-    elements.browserTabContent?.querySelector(`iframe[data-tab-id="${tabId}"]`);
 
   const getTabButton = (tabId) =>
     elements.browserTabs?.querySelector(`.browser-tab[data-tab-id="${tabId}"]`);
 
   const renderBrowserTabBar = () => {
     if (!elements.browserTabs) return;
-    // Rebuild buttons from state (preserves iframe DOM separately)
     elements.browserTabs.innerHTML = "";
     for (const tab of browserTabs) {
       const btn = document.createElement("button");
@@ -683,22 +677,21 @@ window.__omniRendererInitialized = false;
 
   const switchBrowserTab = (tabId) => {
     activeBrowserTab = tabId;
+    const wsId = selectedWorkspaceId;
 
-    // Toggle iframe visibility
+    // Show only the active workspace's active tab frame (hides all others)
     elements.browserTabContent?.querySelectorAll(".browser-frame").forEach((frame) => {
-      frame.classList.toggle("active", frame.dataset.tabId === tabId);
+      const match = frame.dataset.workspaceId === wsId && frame.dataset.tabId === tabId;
+      frame.classList.toggle("active", match);
     });
 
-    // Toggle tab button active state
     elements.browserTabs?.querySelectorAll(".browser-tab").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.tabId === tabId);
     });
 
-    // Show address bar only for non-preview tabs
     const isCustom = tabId !== "preview";
     elements.browserAddressBar?.classList.toggle("hidden", !isCustom);
 
-    // Update address bar value to current tab's iframe src
     if (isCustom && elements.browserAddressInput) {
       const iframe = getTabIframe(tabId);
       const src = iframe?.src || "";
@@ -708,15 +701,17 @@ window.__omniRendererInitialized = false;
   };
 
   const createBrowserTab = (url) => {
+    if (!selectedWorkspaceId) return null;
     browserTabCounter++;
     const tabId = `tab-${browserTabCounter}`;
-    const label = url ? new URL(url).hostname || "New Tab" : "New Tab";
+    let label = "New Tab";
+    if (url) { try { label = new URL(url).hostname || "New Tab"; } catch { label = "New Tab"; } }
     browserTabs.push({ id: tabId, label, closable: true });
 
-    // Create iframe
     const iframe = document.createElement("iframe");
     iframe.className = "surface-frame browser-frame";
     iframe.dataset.tabId = tabId;
+    iframe.dataset.workspaceId = selectedWorkspaceId;
     iframe.title = label;
     if (url) iframe.src = url;
     elements.browserTabContent?.appendChild(iframe);
@@ -727,16 +722,13 @@ window.__omniRendererInitialized = false;
   };
 
   const closeBrowserTab = (tabId) => {
-    if (tabId === "preview") return; // Can't close preview
+    if (tabId === "preview") return;
 
-    // Remove iframe
     const iframe = getTabIframe(tabId);
     iframe?.remove();
 
-    // Remove from state
     browserTabs = browserTabs.filter((t) => t.id !== tabId);
 
-    // If closing the active tab, switch to the previous tab or preview
     if (activeBrowserTab === tabId) {
       const fallback = browserTabs[browserTabs.length - 1]?.id || "preview";
       switchBrowserTab(fallback);
@@ -746,7 +738,7 @@ window.__omniRendererInitialized = false;
   };
 
   const navigateBrowserTab = (tabId, rawUrl) => {
-    if (tabId === "preview") return; // Preview URL is managed internally
+    if (tabId === "preview") return;
     const iframe = getTabIframe(tabId);
     if (!iframe) return;
     let url = rawUrl.trim();
@@ -754,7 +746,6 @@ window.__omniRendererInitialized = false;
     if (!url) return;
     iframe.src = url;
 
-    // Update tab label
     const tab = browserTabs.find((t) => t.id === tabId);
     if (tab) {
       try { tab.label = new URL(url).hostname || url; } catch { tab.label = url; }
@@ -763,12 +754,10 @@ window.__omniRendererInitialized = false;
   };
 
   const bindBrowserTabs = () => {
-    // New tab button
     elements.browserTabNew?.addEventListener("click", () => {
       createBrowserTab("");
     });
 
-    // Address bar — navigate on Enter or Go button
     const doNavigate = () => {
       if (activeBrowserTab === "preview") return;
       const url = elements.browserAddressInput?.value || "";
@@ -780,17 +769,28 @@ window.__omniRendererInitialized = false;
       if (e.key === "Enter") doNavigate();
     });
 
-    // Refresh button — works for both preview and custom tabs
     elements.previewRefresh?.addEventListener("click", () => {
       if (activeBrowserTab === "preview") {
         const selected = getSelectedWorkspace();
         if (!selected?.appPort) return;
         const src = selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`;
-        currentAppSrc = undefined;
+        const ws = wsFrames.get(selectedWorkspaceId);
+        if (ws) ws.appSrc = undefined;
         startAppPreviewWithRetry(src, selected.appPort);
       } else {
         const iframe = getTabIframe(activeBrowserTab);
-        if (iframe?.src) iframe.src = iframe.src; // force reload
+        if (iframe?.src) iframe.src = iframe.src;
+      }
+    });
+
+    elements.browserDevtools?.addEventListener("click", () => {
+      window.omniAPI.toggleDevTools();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "F12") {
+        e.preventDefault();
+        window.omniAPI.toggleDevTools();
       }
     });
   };
@@ -800,25 +800,17 @@ window.__omniRendererInitialized = false;
     const selected = workspaces.find((w) => w.id === selectedWorkspaceId);
 
     if (!selected) {
+      // Hide all workspace frames
+      elements.ideFrameContent?.querySelectorAll(".ws-ide-frame").forEach((f) => f.classList.remove("active"));
+      elements.browserTabContent?.querySelectorAll(".browser-frame").forEach((f) => f.classList.remove("active"));
       elements.workspaceGrid?.classList.add("hidden");
       updateEmptyState(false);
-      if (elements.ideFrame) elements.ideFrame.removeAttribute("src");
-      if (elements.appFrame) {
-        elements.appFrame.removeAttribute("src");
-        elements.appFrame.removeAttribute("srcdoc");
-      }
-      // Close all custom browser tabs (no workspace to save to)
-      for (const t of browserTabs.filter((t) => t.closable)) {
-        getTabIframe(t.id)?.remove();
-      }
-      browserTabs = browserTabs.filter((t) => !t.closable);
+
+      browserTabs = [{ id: "preview", label: "Preview", closable: false }];
       activeBrowserTab = "preview";
       renderBrowserTabBar();
-      switchBrowserTab("preview");
+      elements.browserAddressBar?.classList.add("hidden");
 
-      currentIdeSrc = undefined;
-      currentAppSrc = undefined;
-      usingAppSrcDoc = false;
       terminalWorkspaceId = undefined;
       terminalSessionId = undefined;
       bottomTerm?.reset();
@@ -836,56 +828,71 @@ window.__omniRendererInitialized = false;
       elements.workspaceTitle.textContent = selected.name;
     }
 
-    if (elements.ideFrame) {
-      // Convert Windows path to URI-style path for VS Code web:
-      // "C:\Users\foo" → "/C:/Users/foo"
-      let folderPath = selected.projectPath.replace(/\\/g, "/");
-      if (/^[A-Za-z]:/.test(folderPath)) folderPath = "/" + folderPath;
-      const nextIdeSrc = `http://127.0.0.1:${selected.idePort}/?folder=${encodeURIComponent(folderPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
-      if (currentIdeSrc !== nextIdeSrc) {
-        elements.ideFrame.src = nextIdeSrc;
-        currentIdeSrc = nextIdeSrc;
-      }
-    }
+    // Get or create per-workspace frame state
+    const ws = getWsFrameState(selected.id);
 
-    if (elements.appFrame) {
-      const nextAppSrc = selected.appPort
-        ? (selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`)
-        : null;
-
-      if (nextAppSrc) {
-        if (usingAppSrcDoc || currentAppSrc !== nextAppSrc) {
-          currentAppSrc = nextAppSrc;
-          usingAppSrcDoc = false;
-          startAppPreviewWithRetry(nextAppSrc, selected.appPort);
-        }
-      } else {
-        stopAppPreviewRetry();
-        if (!usingAppSrcDoc) {
-          elements.appFrame.removeAttribute("src");
-          elements.appFrame.srcdoc = "<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#8b95a8;background:#12151e;'>Set an app port to load the browser preview.</body></html>";
-          currentAppSrc = undefined;
-          usingAppSrcDoc = true;
-        }
-      }
-    }
-
+    // --- Workspace Switch ---
     if (terminalWorkspaceId !== selected.id) {
+      // Save outgoing workspace's tab state
+      const prev = wsFrames.get(terminalWorkspaceId);
+      if (prev) {
+        prev.tabs = browserTabs;
+        prev.activeTab = activeBrowserTab;
+        prev.ideFrame.classList.remove("active");
+      }
+
+      // Terminal reset
       bottomTerm?.reset();
       focusedTerm?.reset();
 
-      // Save current workspace's browser tabs before switching
-      saveBrowserTabsForWorkspace(terminalWorkspaceId);
-      terminalWorkspaceId = selected.id;
+      // Load incoming workspace's tab state
+      browserTabs = ws.tabs;
+      activeBrowserTab = ws.activeTab;
+      renderBrowserTabBar();
 
-      // Restore browser tabs for the new workspace
-      restoreBrowserTabsForWorkspace(selected.id);
+      terminalWorkspaceId = selected.id;
     }
 
+    // --- IDE Frame ---
+    elements.ideFrameContent?.querySelectorAll(".ws-ide-frame").forEach((f) => {
+      f.classList.toggle("active", f.dataset.workspaceId === selected.id);
+    });
+
+    let folderPath = selected.projectPath.replace(/\\/g, "/");
+    if (/^[A-Za-z]:/.test(folderPath)) folderPath = "/" + folderPath;
+    const nextIdeSrc = `http://127.0.0.1:${selected.idePort}/?folder=${encodeURIComponent(folderPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
+    if (ws.ideSrc !== nextIdeSrc) {
+      ws.ideFrame.src = nextIdeSrc;
+      ws.ideSrc = nextIdeSrc;
+    }
+
+    // --- Browser Tabs / Preview ---
+    switchBrowserTab(activeBrowserTab);
+
+    const nextAppSrc = selected.appPort
+      ? (selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`)
+      : null;
+
+    if (nextAppSrc) {
+      if (ws.usingSrcDoc || ws.appSrc !== nextAppSrc) {
+        ws.appSrc = nextAppSrc;
+        ws.usingSrcDoc = false;
+        startAppPreviewWithRetry(nextAppSrc, selected.appPort);
+      }
+    } else {
+      stopAppPreviewRetry();
+      if (!ws.usingSrcDoc) {
+        ws.previewFrame.removeAttribute("src");
+        ws.previewFrame.srcdoc = "<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#8b95a8;background:#12151e;'>Set an app port to load the browser preview.</body></html>";
+        ws.appSrc = undefined;
+        ws.usingSrcDoc = true;
+      }
+    }
+
+    // --- Terminal ---
     if (terminalSessionId !== selected.id && api?.startTerminal) {
       await api.startTerminal(selected.id);
       terminalSessionId = selected.id;
-      // Fit terminals after layout settles (double-RAF + timeout for reliability)
       requestAnimationFrame(() => {
         requestAnimationFrame(() => fitAllTerminals());
       });
@@ -1444,14 +1451,15 @@ window.__omniRendererInitialized = false;
       elements.themeSelect.addEventListener("change", () => {
         localStorage.setItem("omni-theme", elements.themeSelect.value);
         applyTheme(elements.themeSelect.value);
-        currentIdeSrc = undefined;
+        // Force IDE reload with new theme
+        wsFrames.forEach((ws) => { ws.ideSrc = undefined; });
         void renderWorkspaceSurface();
       });
     }
 
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (currentTheme !== "system") return;
-      currentIdeSrc = undefined;
+      wsFrames.forEach((ws) => { ws.ideSrc = undefined; });
       void renderWorkspaceSurface();
     });
 

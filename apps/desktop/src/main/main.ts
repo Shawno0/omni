@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, ipcMain, session, shell } from "electron";
 import { WorkspaceManager } from "./workspaces/WorkspaceManager.js";
 import { ProtocolInterceptor } from "./network/ProtocolInterceptor.js";
 import { ActivityMonitor } from "./monitoring/ActivityMonitor.js";
@@ -23,14 +23,21 @@ const ptyActivityBridge = new PTYActivityBridge({
   },
 });
 
+/** Safely send IPC to the shell window — no-op if window is destroyed or gone. */
+function safeSend(channel: string, ...args: unknown[]): void {
+  if (shellWindow && !shellWindow.isDestroyed()) {
+    shellWindow.webContents.send(channel, ...args);
+  }
+}
+
 const workspaceManager = new WorkspaceManager({
   onProcessOutput: (workspaceId, stream, chunk) => {
     ptyActivityBridge.recordOutput(workspaceId);
-    shellWindow?.webContents.send("workspace:log", workspaceId, stream, chunk);
+    safeSend("workspace:log", workspaceId, stream, chunk);
   },
   onTerminalOutput: (workspaceId, data) => {
     ptyActivityBridge.recordOutput(workspaceId);
-    shellWindow?.webContents.send("workspace:terminal:data", workspaceId, data);
+    safeSend("workspace:terminal:data", workspaceId, data);
   },
 });
 const ptyHeartbeatServer = new PTYHeartbeatServer({
@@ -80,7 +87,7 @@ const activityMonitor = new ActivityMonitor({
       bucket.shift();
     }
     activityTimelineByWorkspace.set(sample.workspaceId, bucket);
-    shellWindow?.webContents.send("diagnostics:activity:updated", sample.workspaceId, bucket.slice(-40).reverse());
+    safeSend("diagnostics:activity:updated", sample.workspaceId, bucket.slice(-40).reverse());
   },
 });
 
@@ -172,6 +179,15 @@ function createShellWindow(): BrowserWindow {
 
   void window.loadFile(rendererPath);
 
+  // Allow popups from iframes (OAuth flows, external links, etc.)
+  // Open them in the user's default system browser instead of blocking them.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
   window.webContents.on("did-finish-load", () => {
     void (async () => {
       try {
@@ -197,7 +213,7 @@ function createShellWindow(): BrowserWindow {
 }
 
 function broadcastWorkspaceUpdate(): void {
-  shellWindow?.webContents.send("workspaces:updated", workspaceManager.list());
+  safeSend("workspaces:updated", workspaceManager.list());
 }
 
 function registerIpc(): void {
@@ -272,7 +288,7 @@ function registerIpc(): void {
 
     focusedWorkspaceId = workspace.id;
     broadcastWorkspaceUpdate();
-    shellWindow?.webContents.send("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
+    safeSend("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
     void persistWorkspaceState();
     return workspace;
   });
@@ -299,7 +315,7 @@ function registerIpc(): void {
   ipcMain.handle("workspace:setAppPort", async (_event, workspaceId: string, appPort: number) => {
     const workspace = workspaceManager.setAppPort(workspaceId, appPort);
     broadcastWorkspaceUpdate();
-    shellWindow?.webContents.send("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
+    safeSend("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
     await persistWorkspaceState();
     return workspace;
   });
@@ -324,6 +340,16 @@ function registerIpc(): void {
 
   ipcMain.handle("workspace:terminal:start", (_event, workspaceId: string) => {
     workspaceManager.startTerminal(workspaceId);
+  });
+
+  ipcMain.handle("devtools:toggle", () => {
+    if (shellWindow && !shellWindow.isDestroyed()) {
+      if (shellWindow.webContents.isDevToolsOpened()) {
+        shellWindow.webContents.closeDevTools();
+      } else {
+        shellWindow.webContents.openDevTools();
+      }
+    }
   });
 
   ipcMain.handle("workspace:terminal:input", (_event, workspaceId: string, data: string) => {
@@ -448,7 +474,7 @@ async function bootstrap(): Promise<void> {
   shellWindow = createShellWindow();
   broadcastWorkspaceUpdate();
   shellWindow.webContents.once("did-finish-load", () => {
-    shellWindow?.webContents.send("diagnostics:restore:updated", restoreDiagnostics.slice(-60).reverse());
+    safeSend("diagnostics:restore:updated", restoreDiagnostics.slice(-60).reverse());
   });
   activityMonitor.start();
   ptyActivityBridge.start();

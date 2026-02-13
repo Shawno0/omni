@@ -26,6 +26,7 @@ const omniAPI = {
     ipcRenderer.invoke("diagnostics:activity:list", workspaceId, limit),
   setKey: (provider: "anthropic" | "openai", value: string) => ipcRenderer.invoke("keys:set", provider, value),
   deleteKey: (provider: "anthropic" | "openai") => ipcRenderer.invoke("keys:delete", provider),
+  toggleDevTools: () => ipcRenderer.invoke("devtools:toggle"),
   onWorkspacesUpdated: (listener: (workspaces: unknown[]) => void) => {
     const eventName = "workspaces:updated";
     const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown[]) => listener(payload);
