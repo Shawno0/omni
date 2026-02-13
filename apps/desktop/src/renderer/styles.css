@@ -1045,7 +1045,7 @@ button {
   display: none;
 }
 .browser-frame.active {
-  display: block;
+  display: flex;
 }
 
 .ide-frame-content {
@@ -1064,7 +1064,7 @@ button {
   display: none;
 }
 .ws-ide-frame.active {
-  display: block;
+  display: flex;
 }
 
 .surface-frame {

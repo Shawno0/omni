@@ -552,8 +552,7 @@ window.__omniRendererInitialized = false;
     const frame = getActivePreviewFrame();
     if (!frame) return;
     switchBrowserTab("preview");
-    frame.removeAttribute("src");
-    frame.srcdoc = `<!doctype html><html><head><style>
+    const loadingHtml = `<!doctype html><html><head><style>
       body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh;
              font:14px system-ui; color:#8b95a8; background:#12151e; flex-direction:column; gap:12px; }
       .spinner { width:24px; height:24px; border:3px solid #2a2e38; border-top-color:#60a5fa;
@@ -564,6 +563,7 @@ window.__omniRendererInitialized = false;
       <div>Waiting for server on port ${port}\u2026</div>
       <div style="font-size:12px;color:#555a66;">Will auto-load when ready</div>
     </body></html>`;
+    frame.src = "data:text/html;charset=utf-8," + encodeURIComponent(loadingHtml);
   };
 
   const startAppPreviewWithRetry = (targetSrc, port) => {
@@ -587,7 +587,6 @@ window.__omniRendererInitialized = false;
       stopAppPreviewRetry();
       const frame = wsFrames.get(capturedWsId)?.previewFrame;
       if (!frame) return;
-      frame.removeAttribute("srcdoc");
       frame.src = src;
     };
 
@@ -604,18 +603,26 @@ window.__omniRendererInitialized = false;
   const getWsFrameState = (wsId) => {
     if (wsFrames.has(wsId)) return wsFrames.get(wsId);
 
-    // Create IDE iframe (stays alive across workspace switches)
-    const ideFrame = document.createElement("iframe");
+    // Find the workspace to get its partition
+    const workspace = workspaces.find((w) => w.id === wsId);
+    const partition = workspace?.partition || `persist:session_${wsId}`;
+
+    // Create IDE webview (stays alive across workspace switches)
+    const ideFrame = document.createElement("webview");
     ideFrame.className = "ws-ide-frame";
     ideFrame.dataset.workspaceId = wsId;
+    ideFrame.setAttribute("partition", partition);
+    ideFrame.setAttribute("allowpopups", "");
     ideFrame.title = "IDE";
     elements.ideFrameContent?.appendChild(ideFrame);
 
-    // Create preview iframe
-    const previewFrame = document.createElement("iframe");
+    // Create preview webview
+    const previewFrame = document.createElement("webview");
     previewFrame.className = "surface-frame browser-frame";
     previewFrame.dataset.workspaceId = wsId;
     previewFrame.dataset.tabId = "preview";
+    previewFrame.setAttribute("partition", partition);
+    previewFrame.setAttribute("allowpopups", "");
     previewFrame.title = "App Preview";
     elements.browserTabContent?.appendChild(previewFrame);
 
@@ -641,7 +648,7 @@ window.__omniRendererInitialized = false;
   const getTabIframe = (tabId) => {
     if (!selectedWorkspaceId) return null;
     return elements.browserTabContent?.querySelector(
-      `iframe[data-workspace-id="${selectedWorkspaceId}"][data-tab-id="${tabId}"]`
+      `webview[data-workspace-id="${selectedWorkspaceId}"][data-tab-id="${tabId}"]`
     );
   };
 
@@ -694,8 +701,8 @@ window.__omniRendererInitialized = false;
 
     if (isCustom && elements.browserAddressInput) {
       const iframe = getTabIframe(tabId);
-      const src = iframe?.src || "";
-      elements.browserAddressInput.value = src.startsWith("about:") ? "" : src;
+      const src = iframe?.src || iframe?.getURL?.() || "";
+      elements.browserAddressInput.value = src.startsWith("about:") || src.startsWith("data:") ? "" : src;
       elements.browserAddressInput.focus();
     }
   };
@@ -708,13 +715,18 @@ window.__omniRendererInitialized = false;
     if (url) { try { label = new URL(url).hostname || "New Tab"; } catch { label = "New Tab"; } }
     browserTabs.push({ id: tabId, label, closable: true });
 
-    const iframe = document.createElement("iframe");
-    iframe.className = "surface-frame browser-frame";
-    iframe.dataset.tabId = tabId;
-    iframe.dataset.workspaceId = selectedWorkspaceId;
-    iframe.title = label;
-    if (url) iframe.src = url;
-    elements.browserTabContent?.appendChild(iframe);
+    const workspace = workspaces.find((w) => w.id === selectedWorkspaceId);
+    const partition = workspace?.partition || `persist:session_${selectedWorkspaceId}`;
+
+    const wv = document.createElement("webview");
+    wv.className = "surface-frame browser-frame";
+    wv.dataset.tabId = tabId;
+    wv.dataset.workspaceId = selectedWorkspaceId;
+    wv.setAttribute("partition", partition);
+    wv.setAttribute("allowpopups", "");
+    wv.title = label;
+    if (url) wv.src = url;
+    elements.browserTabContent?.appendChild(wv);
 
     renderBrowserTabBar();
     switchBrowserTab(tabId);
@@ -724,8 +736,8 @@ window.__omniRendererInitialized = false;
   const closeBrowserTab = (tabId) => {
     if (tabId === "preview") return;
 
-    const iframe = getTabIframe(tabId);
-    iframe?.remove();
+    const wv = getTabIframe(tabId);
+    wv?.remove();
 
     browserTabs = browserTabs.filter((t) => t.id !== tabId);
 
@@ -739,12 +751,12 @@ window.__omniRendererInitialized = false;
 
   const navigateBrowserTab = (tabId, rawUrl) => {
     if (tabId === "preview") return;
-    const iframe = getTabIframe(tabId);
-    if (!iframe) return;
+    const wv = getTabIframe(tabId);
+    if (!wv) return;
     let url = rawUrl.trim();
     if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
     if (!url) return;
-    iframe.src = url;
+    wv.src = url;
 
     const tab = browserTabs.find((t) => t.id === tabId);
     if (tab) {
@@ -773,13 +785,16 @@ window.__omniRendererInitialized = false;
       if (activeBrowserTab === "preview") {
         const selected = getSelectedWorkspace();
         if (!selected?.appPort) return;
-        const src = selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`;
+        const src = `http://localhost:${selected.appPort}`;
         const ws = wsFrames.get(selectedWorkspaceId);
         if (ws) ws.appSrc = undefined;
         startAppPreviewWithRetry(src, selected.appPort);
       } else {
-        const iframe = getTabIframe(activeBrowserTab);
-        if (iframe?.src) iframe.src = iframe.src;
+        const wv = getTabIframe(activeBrowserTab);
+        if (wv) {
+          const url = wv.getURL ? wv.getURL() : wv.src;
+          if (url) wv.src = url;
+        }
       }
     });
 
@@ -860,7 +875,7 @@ window.__omniRendererInitialized = false;
 
     let folderPath = selected.projectPath.replace(/\\/g, "/");
     if (/^[A-Za-z]:/.test(folderPath)) folderPath = "/" + folderPath;
-    const nextIdeSrc = `http://127.0.0.1:${selected.idePort}/?folder=${encodeURIComponent(folderPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
+    const nextIdeSrc = `http://localhost:${selected.idePort}/?folder=${encodeURIComponent(folderPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
     if (ws.ideSrc !== nextIdeSrc) {
       ws.ideFrame.src = nextIdeSrc;
       ws.ideSrc = nextIdeSrc;
@@ -870,7 +885,7 @@ window.__omniRendererInitialized = false;
     switchBrowserTab(activeBrowserTab);
 
     const nextAppSrc = selected.appPort
-      ? (selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`)
+      ? `http://localhost:${selected.appPort}`
       : null;
 
     if (nextAppSrc) {
@@ -882,8 +897,7 @@ window.__omniRendererInitialized = false;
     } else {
       stopAppPreviewRetry();
       if (!ws.usingSrcDoc) {
-        ws.previewFrame.removeAttribute("src");
-        ws.previewFrame.srcdoc = "<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#8b95a8;background:#12151e;'>Set an app port to load the browser preview.</body></html>";
+        ws.previewFrame.src = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#8b95a8;background:#12151e;'>Set an app port to load the browser preview.</body></html>");
         ws.appSrc = undefined;
         ws.usingSrcDoc = true;
       }

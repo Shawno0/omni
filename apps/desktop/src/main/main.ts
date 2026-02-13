@@ -127,6 +127,30 @@ function getActivityTimeline(workspaceId?: string, limit = 40): Array<{
   return (activityTimelineByWorkspace.get(workspaceId) ?? []).slice(-Math.max(1, limit)).reverse();
 }
 
+/**
+ * Strip headers (X-Frame-Options, CSP) that prevent content from loading
+ * inside webview / iframe elements. Called once per Electron Session.
+ */
+const strippedSessions = new WeakSet<Electron.Session>();
+function stripEmbeddingHeaders(sess: Electron.Session): void {
+  if (strippedSessions.has(sess)) return;
+  strippedSessions.add(sess);
+  sess.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase();
+      if (
+        lower === "x-frame-options" ||
+        lower === "content-security-policy" ||
+        lower === "content-security-policy-report-only"
+      ) {
+        delete headers[key];
+      }
+    }
+    callback({ cancel: false, responseHeaders: headers });
+  });
+}
+
 function createShellWindow(): BrowserWindow {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const appRoot = app.getAppPath();
@@ -174,26 +198,33 @@ function createShellWindow(): BrowserWindow {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
+      webviewTag: true,
     },
   });
 
   void window.loadFile(rendererPath);
 
-  // Allow popups from iframes (OAuth flows, external links, etc.)
-  // Open them as Electron windows so OAuth redirects to virtual hostnames
-  // (*.local, *.ide) flow through the protocol handler and share cookies.
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      return {
-        action: "allow",
-        overrideBrowserWindowOptions: {
-          width: 600,
-          height: 750,
-          autoHideMenuBar: true,
-        },
-      };
-    }
-    return { action: "deny" };
+  // Handle popups from webview and shell window content.
+  app.on("web-contents-created", (_event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      // Popups from webviews (OAuth flows) must open as real Electron windows
+      // that share the webview's partition session so cookies are preserved.
+      if (contents.getType() === "webview") {
+        return {
+          action: "allow",
+          overrideBrowserWindowOptions: {
+            width: 600,
+            height: 750,
+            autoHideMenuBar: true,
+          },
+        };
+      }
+      // For the shell window itself, open in the system browser.
+      if (url.startsWith("http://") || url.startsWith("https://")) {
+        void shell.openExternal(url);
+      }
+      return { action: "deny" };
+    });
   });
 
   window.webContents.on("did-finish-load", () => {
@@ -241,7 +272,7 @@ function registerIpc(): void {
     const workspace = workspaceManager.create(input);
 
     const partitionSession = session.fromPartition(workspace.partition);
-    protocolInterceptor.ensureRegistered(partitionSession, workspace.partition, () => workspaceManager.list());
+    stripEmbeddingHeaders(partitionSession);
 
     const started = await startWorkspaceWithProviderEnv(workspace.id);
 
@@ -257,7 +288,7 @@ function registerIpc(): void {
     }
 
     const partitionSession = session.fromPartition(workspace.partition);
-    protocolInterceptor.ensureRegistered(partitionSession, workspace.partition, () => workspaceManager.list());
+    stripEmbeddingHeaders(partitionSession);
 
     const started = await startWorkspaceWithProviderEnv(workspace.id);
     broadcastWorkspaceUpdate();
@@ -273,7 +304,7 @@ function registerIpc(): void {
     }
 
     const partitionSession = session.fromPartition(workspace.partition);
-    protocolInterceptor.ensureRegistered(partitionSession, workspace.partition, () => workspaceManager.list());
+    stripEmbeddingHeaders(partitionSession);
 
     const restarted = await startWorkspaceWithProviderEnv(workspace.id);
     broadcastWorkspaceUpdate();
@@ -409,7 +440,7 @@ async function restorePersistedSessions(): Promise<void> {
   for (const persisted of payload.workspaces) {
     const workspace = workspaceManager.restore(persisted);
     const partitionSession = session.fromPartition(workspace.partition);
-    protocolInterceptor.ensureRegistered(partitionSession, workspace.partition, () => workspaceManager.list());
+    stripEmbeddingHeaders(partitionSession);
     try {
       await startWorkspaceWithProviderEnv(workspace.id);
       restoreDiagnostics.push({
@@ -456,70 +487,9 @@ async function bootstrap(): Promise<void> {
   await restorePersistedSessions();
   registerIpc();
 
-  // Register the protocol interceptor on the default session so the shell
-  // window's iframes (IDE + Browser preview) can route through virtual hosts.
-  protocolInterceptor.ensureRegistered(session.defaultSession, "__default__", () => workspaceManager.list());
-
-  // Strip iframe-blocking headers from ALL responses on the default session.
-  // This allows external HTTPS sites (docs, dashboards, etc.) to load inside
-  // <iframe> browser tabs without being blocked by X-Frame-Options / CSP.
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const headers = { ...details.responseHeaders };
-    // Delete all case-variants of headers that block iframe embedding
-    for (const key of Object.keys(headers)) {
-      const lower = key.toLowerCase();
-      if (
-        lower === "x-frame-options" ||
-        lower === "content-security-policy" ||
-        lower === "content-security-policy-report-only"
-      ) {
-        delete headers[key];
-      }
-    }
-    callback({ cancel: false, responseHeaders: headers });
-  });
-
-  // Redirect WebSocket connections from virtual hostnames (*.local, *.ide)
-  // to the actual localhost port. protocol.handle("http") does not intercept
-  // WebSocket upgrade requests, so we use webRequest.onBeforeRequest instead.
-  // NOTE: Chromium's URL match-patterns don't support ws:// scheme, so we
-  // omit the URL filter entirely and check hostname + resourceType inside.
-  session.defaultSession.webRequest.onBeforeRequest(
-    (details, callback) => {
-      // Only redirect WebSocket requests — HTTP is handled by protocol.handle
-      if (details.resourceType !== "webSocket") {
-        callback({});
-        return;
-      }
-      let parsed: URL;
-      try {
-        // ws:// URLs need to be parsed; swap scheme so URL constructor accepts it
-        const httpUrl = details.url.replace(/^ws:/, "http:").replace(/^wss:/, "https:");
-        parsed = new URL(httpUrl);
-      } catch {
-        callback({});
-        return;
-      }
-      const host = parsed.hostname.toLowerCase();
-      const workspaces = workspaceManager.list();
-      const workspace = workspaces.find(
-        (w) => w.appHost === host || w.ideHost === host,
-      );
-      if (workspace) {
-        const port = workspace.appHost === host ? workspace.appPort : workspace.idePort;
-        if (port) {
-          // Build redirect URL preserving the original ws(s) scheme
-          const scheme = details.url.startsWith("wss:") ? "wss:" : "ws:";
-          parsed.protocol = scheme;
-          parsed.hostname = "127.0.0.1";
-          parsed.port = String(port);
-          callback({ redirectURL: parsed.toString() });
-          return;
-        }
-      }
-      callback({});
-    },
-  );
+  // Strip embedding-blocking headers on the default session.
+  // Partition sessions are handled when workspaces are created/restored.
+  stripEmbeddingHeaders(session.defaultSession);
 
   shellWindow = createShellWindow();
   broadcastWorkspaceUpdate();
