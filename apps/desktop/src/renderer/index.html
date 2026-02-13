@@ -157,11 +157,22 @@
               tabindex="0"
             ></div>
             <div class="surface-pane surface-browser">
-              <div class="surface-head">
-                Preview
-                <button id="preview-refresh" title="Reload preview" style="margin-left:auto;background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:13px;padding:2px 6px;">&#x21bb;</button>
+              <div class="browser-tab-bar">
+                <div class="browser-tabs" id="browser-tabs">
+                  <button class="browser-tab active" data-tab-id="preview" title="App Preview">
+                    <span class="browser-tab-label">Preview</span>
+                  </button>
+                </div>
+                <button class="browser-tab-new" id="browser-tab-new" title="New tab">+</button>
+                <button id="preview-refresh" class="browser-tab-action" title="Reload">&#x21bb;</button>
               </div>
-              <iframe id="app-frame" class="surface-frame" title="Browser"></iframe>
+              <div class="browser-address-bar hidden" id="browser-address-bar">
+                <input type="text" id="browser-address-input" class="browser-address-input" placeholder="Enter URL…" spellcheck="false" />
+                <button id="browser-address-go" class="browser-address-go" title="Navigate">&#x2192;</button>
+              </div>
+              <div class="browser-tab-content" id="browser-tab-content">
+                <iframe id="app-frame" class="surface-frame browser-frame active" data-tab-id="preview" title="App Preview"></iframe>
+              </div>
             </div>
           </div>
           <!-- Focused-mode: full-size terminal pane -->

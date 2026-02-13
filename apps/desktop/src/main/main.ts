@@ -426,6 +426,25 @@ async function bootstrap(): Promise<void> {
   // window's iframes (IDE + Browser preview) can route through virtual hosts.
   protocolInterceptor.ensureRegistered(session.defaultSession, "__default__", () => workspaceManager.list());
 
+  // Strip iframe-blocking headers from ALL responses on the default session.
+  // This allows external HTTPS sites (docs, dashboards, etc.) to load inside
+  // <iframe> browser tabs without being blocked by X-Frame-Options / CSP.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    // Delete all case-variants of headers that block iframe embedding
+    for (const key of Object.keys(headers)) {
+      const lower = key.toLowerCase();
+      if (
+        lower === "x-frame-options" ||
+        lower === "content-security-policy" ||
+        lower === "content-security-policy-report-only"
+      ) {
+        delete headers[key];
+      }
+    }
+    callback({ cancel: false, responseHeaders: headers });
+  });
+
   shellWindow = createShellWindow();
   broadcastWorkspaceUpdate();
   shellWindow.webContents.once("did-finish-load", () => {

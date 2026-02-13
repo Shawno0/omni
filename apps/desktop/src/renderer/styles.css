@@ -885,6 +885,169 @@ button {
   flex-shrink: 0;
 }
 
+/* ── Browser Tab Bar ──────────────────────────────────────────────── */
+.browser-tab-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 30px;
+}
+
+.browser-tabs {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  scrollbar-width: none;
+}
+.browser-tabs::-webkit-scrollbar { display: none; }
+
+.browser-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 30px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 160px;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.browser-tab:hover { background: var(--bg-raised); color: var(--text-secondary); }
+.browser-tab.active {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--accent);
+}
+
+.browser-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.browser-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.browser-tab:hover .browser-tab-close,
+.browser-tab.active .browser-tab-close { opacity: 1; }
+.browser-tab-close:hover { background: var(--bg-raised); color: var(--text-primary); }
+
+.browser-tab-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 30px;
+  font-size: 16px;
+  font-weight: 300;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.browser-tab-new:hover { color: var(--text-primary); }
+
+.browser-tab-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 30px;
+  font-size: 14px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+.browser-tab-action:hover { color: var(--text-primary); }
+
+/* ── Browser Address Bar ──────────────────────────────────────────── */
+.browser-address-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+.browser-address-bar.hidden { display: none; }
+
+.browser-address-input {
+  flex: 1;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  outline: none;
+}
+.browser-address-input:focus { border-color: var(--accent); }
+
+.browser-address-go {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+.browser-address-go:hover { color: var(--text-primary); }
+
+/* ── Browser Tab Content ──────────────────────────────────────────── */
+.browser-tab-content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.browser-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg-base);
+  display: none;
+}
+.browser-frame.active {
+  display: block;
+}
+
 .surface-frame {
   width: 100%;
   flex: 1;

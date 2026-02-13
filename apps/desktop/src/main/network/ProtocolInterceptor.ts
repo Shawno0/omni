@@ -111,7 +111,10 @@ export class ProtocolInterceptor {
           severity: "warning",
           error: "Workspace app port is not configured",
         });
-        return new Response("Workspace app port is not configured", { status: 503 });
+        return new Response("Workspace app port is not configured", {
+          status: 503,
+          headers: { "Access-Control-Allow-Origin": "*" },
+        });
       }
 
       const target = new URL(request.url);
@@ -149,7 +152,10 @@ export class ProtocolInterceptor {
           severity: "error",
           error: error instanceof Error ? error.message : "Proxy request failed",
         });
-        return new Response("Upstream app request failed", { status: 502 });
+        return new Response("Upstream app request failed", {
+          status: 502,
+          headers: { "Access-Control-Allow-Origin": "*" },
+        });
       }
     });
 
@@ -182,6 +188,7 @@ export class ProtocolInterceptor {
     headers.delete("x-frame-options");
     headers.delete("content-security-policy");
     headers.delete("content-security-policy-report-only");
+    headers.set("access-control-allow-origin", "*");
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
