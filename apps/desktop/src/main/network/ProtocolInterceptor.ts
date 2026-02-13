@@ -33,17 +33,31 @@ export class ProtocolInterceptor {
       const workspace = getWorkspaces().find((candidate) => candidate.ideHost === host || candidate.appHost === host);
 
       if (!workspace) {
-        const response = await fetch(request);
-        this.record({
-          method: request.method,
-          path: url.pathname,
-          host,
-          routeType: "passthrough",
-          status: response.status,
-          ok: response.ok,
-          severity: this.severityFor(response.status, response.ok),
-        });
-        return response;
+        try {
+          const response = await fetch(request);
+          this.record({
+            method: request.method,
+            path: url.pathname,
+            host,
+            routeType: "passthrough",
+            status: response.status,
+            ok: response.ok,
+            severity: this.severityFor(response.status, response.ok),
+          });
+          return response;
+        } catch (error) {
+          this.record({
+            method: request.method,
+            path: url.pathname,
+            host,
+            routeType: "passthrough",
+            status: 502,
+            ok: false,
+            severity: "error",
+            error: error instanceof Error ? error.message : "Passthrough fetch failed",
+          });
+          return new Response("Passthrough request failed", { status: 502 });
+        }
       }
 
       if (workspace.ideHost === host) {
@@ -121,7 +135,7 @@ export class ProtocolInterceptor {
           ok: response.ok,
           severity: this.severityFor(response.status, response.ok),
         });
-        return response;
+        return this.stripFrameBlockingHeaders(response);
       } catch (error) {
         this.record({
           method: request.method,
@@ -156,6 +170,23 @@ export class ProtocolInterceptor {
     if (this.events.length > this.maxEvents) {
       this.events.shift();
     }
+  }
+
+  /**
+   * Strip headers that prevent the response from loading inside an iframe.
+   * Upstream dev-servers (Next.js, Vite, etc.) commonly send
+   * X-Frame-Options: SAMEORIGIN which blocks file:// → http:// embedding.
+   */
+  private stripFrameBlockingHeaders(response: Response): Response {
+    const headers = new Headers(response.headers);
+    headers.delete("x-frame-options");
+    headers.delete("content-security-policy");
+    headers.delete("content-security-policy-report-only");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   }
 
   private rewriteHeaders(input: Headers, sourceHost: string, targetHost: string): Headers {

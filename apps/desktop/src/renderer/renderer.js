@@ -57,6 +57,7 @@ window.__omniRendererInitialized = false;
     focusedTerminal: el("focused-terminal"),
     terminalContainer: el("terminal-container"),
     focusedTerminalContainer: el("focused-terminal-container"),
+    previewRefresh: el("preview-refresh"),
   };
 
   /* ─── xterm.js Instances ──────────────────────────────────────────── */
@@ -189,6 +190,8 @@ window.__omniRendererInitialized = false;
   let applyingWorkspaceUpdate = false;
   let terminalSessionId;
   let ideRatio = Number(localStorage.getItem("omni-ide-ratio") || "50");
+  let appPreviewRetryTimer = null;
+  let appPreviewTargetSrc = null;
   let layoutMode = localStorage.getItem("omni-layout") || "overview"; // "overview" | "focused"
   let focusedSurface = localStorage.getItem("omni-focused-surface") || "ide"; // "ide" | "preview" | "terminal"
   let paletteShortcut = localStorage.getItem("omni-palette-key") || "k";
@@ -529,6 +532,66 @@ window.__omniRendererInitialized = false;
     }).join("\n");
   };
 
+  /* ─── App Preview with Retry ──────────────────────────────────────── */
+  const stopAppPreviewRetry = () => {
+    if (appPreviewRetryTimer) {
+      clearInterval(appPreviewRetryTimer);
+      appPreviewRetryTimer = null;
+    }
+    appPreviewTargetSrc = null;
+  };
+
+  const showPreviewLoading = (port) => {
+    if (!elements.appFrame) return;
+    elements.appFrame.removeAttribute("src");
+    elements.appFrame.srcdoc = `<!doctype html><html><head><style>
+      body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh;
+             font:14px system-ui; color:#8b95a8; background:#12151e; flex-direction:column; gap:12px; }
+      .spinner { width:24px; height:24px; border:3px solid #2a2e38; border-top-color:#60a5fa;
+                 border-radius:50%; animation:spin 0.8s linear infinite; }
+      @keyframes spin { to { transform:rotate(360deg); } }
+    </style></head><body>
+      <div class="spinner"></div>
+      <div>Waiting for server on port ${port}…</div>
+      <div style="font-size:12px;color:#555a66;">Will auto-load when ready</div>
+    </body></html>`;
+  };
+
+  const startAppPreviewWithRetry = (targetSrc, port) => {
+    stopAppPreviewRetry();
+    appPreviewTargetSrc = targetSrc;
+    showPreviewLoading(port);
+
+    // Try loading immediately first
+    const tryLoad = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}`, { method: "HEAD", mode: "no-cors" });
+        // no-cors returns opaque response (status 0) on success — that's fine
+        loadPreview(targetSrc);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const loadPreview = (src) => {
+      stopAppPreviewRetry();
+      if (!elements.appFrame) return;
+      elements.appFrame.removeAttribute("srcdoc");
+      elements.appFrame.src = src;
+    };
+
+    // First attempt
+    tryLoad().then((ok) => {
+      if (ok || appPreviewTargetSrc !== targetSrc) return;
+      // Poll every 2 seconds
+      appPreviewRetryTimer = setInterval(async () => {
+        if (appPreviewTargetSrc !== targetSrc) { stopAppPreviewRetry(); return; }
+        await tryLoad();
+      }, 2000);
+    });
+  };
+
   /* ─── Workspace Surface ───────────────────────────────────────────── */
   const renderWorkspaceSurface = async () => {
     const selected = workspaces.find((w) => w.id === selectedWorkspaceId);
@@ -574,15 +637,18 @@ window.__omniRendererInitialized = false;
     }
 
     if (elements.appFrame) {
-      if (selected.appPort) {
-        const nextAppSrc = `http://127.0.0.1:${selected.appPort}`;
+      const nextAppSrc = selected.appPort
+        ? (selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`)
+        : null;
+
+      if (nextAppSrc) {
         if (usingAppSrcDoc || currentAppSrc !== nextAppSrc) {
-          elements.appFrame.removeAttribute("srcdoc");
-          elements.appFrame.src = nextAppSrc;
           currentAppSrc = nextAppSrc;
           usingAppSrcDoc = false;
+          startAppPreviewWithRetry(nextAppSrc, selected.appPort);
         }
       } else {
+        stopAppPreviewRetry();
         if (!usingAppSrcDoc) {
           elements.appFrame.removeAttribute("src");
           elements.appFrame.srcdoc = "<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#8b95a8;background:#12151e;'>Set an app port to load the browser preview.</body></html>";
@@ -1178,6 +1244,16 @@ window.__omniRendererInitialized = false;
     bindLayoutSwitcher();
     bindPanelCardToggles();
     bindBottomPanelTabs();
+
+    // Preview refresh button
+    elements.previewRefresh?.addEventListener("click", () => {
+      const selected = getSelectedWorkspace();
+      if (!selected?.appPort) return;
+      const src = selected.appHost ? `http://${selected.appHost}` : `http://127.0.0.1:${selected.appPort}`;
+      currentAppSrc = undefined; // force re-load
+      startAppPreviewWithRetry(src, selected.appPort);
+    });
+
     bindQuickActions();
     bindBYOK();
     bindSettings();

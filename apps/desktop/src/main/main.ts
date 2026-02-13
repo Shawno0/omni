@@ -422,6 +422,10 @@ async function bootstrap(): Promise<void> {
   await restorePersistedSessions();
   registerIpc();
 
+  // Register the protocol interceptor on the default session so the shell
+  // window's iframes (IDE + Browser preview) can route through virtual hosts.
+  protocolInterceptor.ensureRegistered(session.defaultSession, "__default__", () => workspaceManager.list());
+
   shellWindow = createShellWindow();
   broadcastWorkspaceUpdate();
   shellWindow.webContents.once("did-finish-load", () => {
