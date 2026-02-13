@@ -148,15 +148,17 @@ window.__omniRendererInitialized = false;
       });
     }
 
-    // Prevent the scrollable tab-content parent from capturing Space/PageUp/PageDown
-    // when the terminal is focused. xterm handles these keys internally.
+    // Fix: The terminal tab's parent (.bottom-tab-content) has overflow:auto,
+    // which makes the browser treat Space as "scroll down" — eating the keypress
+    // before xterm can handle it. We remove overflow on the terminal-specific
+    // tab content so it's not scrollable (xterm handles its own scrolling).
+    // Applied via JS *after* xterm creation to avoid layout measurement issues.
     const termTabContent = elements.terminalContainer?.closest(".bottom-tab-content");
     if (termTabContent) {
-      termTabContent.addEventListener("keydown", (e) => {
-        if (e.key === " " || e.key === "PageUp" || e.key === "PageDown") {
-          e.preventDefault();
-        }
-      });
+      termTabContent.style.overflow = "hidden";
+      termTabContent.style.padding = "0";
+      // Re-fit after layout change
+      requestAnimationFrame(() => fitAllTerminals());
     }
   };
 
@@ -226,6 +228,63 @@ window.__omniRendererInitialized = false;
     elements.appShell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
   };
 
+  /* ─── Custom Prompt (Electron doesn't support window.prompt) ─────── */
+  const showPrompt = (message, defaultValue = "") => {
+    return new Promise((resolve) => {
+      const overlay = document.createElement("div");
+      Object.assign(overlay.style, {
+        position: "fixed", inset: "0", background: "rgba(0,0,0,0.5)",
+        display: "flex", alignItems: "center", justifyContent: "center", zIndex: "9999",
+      });
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        background: "var(--bg-surface, #1a1d24)", borderRadius: "8px", padding: "20px",
+        minWidth: "320px", maxWidth: "420px", color: "var(--text-primary, #d4d7de)",
+        fontFamily: "system-ui, sans-serif", fontSize: "13px",
+        border: "1px solid var(--border, #2a2e38)",
+      });
+      const label = document.createElement("div");
+      label.textContent = message;
+      label.style.marginBottom = "12px";
+      const input = document.createElement("input");
+      Object.assign(input.style, {
+        width: "100%", padding: "6px 10px", borderRadius: "4px", border: "1px solid var(--border, #2a2e38)",
+        background: "var(--bg-primary, #0f1115)", color: "var(--text-primary, #d4d7de)",
+        fontSize: "13px", boxSizing: "border-box",
+      });
+      input.type = "text";
+      input.value = defaultValue;
+      const btnRow = document.createElement("div");
+      Object.assign(btnRow.style, { display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "12px" });
+      const cancelBtn = document.createElement("button");
+      cancelBtn.textContent = "Cancel";
+      Object.assign(cancelBtn.style, {
+        padding: "5px 14px", borderRadius: "4px", border: "1px solid var(--border, #2a2e38)",
+        background: "transparent", color: "var(--text-secondary, #8b95a8)", cursor: "pointer",
+      });
+      const okBtn = document.createElement("button");
+      okBtn.textContent = "OK";
+      Object.assign(okBtn.style, {
+        padding: "5px 14px", borderRadius: "4px", border: "none",
+        background: "var(--accent, #60a5fa)", color: "#fff", cursor: "pointer",
+      });
+      const close = (val) => { overlay.remove(); resolve(val); };
+      cancelBtn.addEventListener("click", () => close(null));
+      okBtn.addEventListener("click", () => close(input.value));
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") close(input.value);
+        if (e.key === "Escape") close(null);
+      });
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) close(null); });
+      btnRow.append(cancelBtn, okBtn);
+      box.append(label, input, btnRow);
+      overlay.append(box);
+      document.body.append(overlay);
+      input.focus();
+      input.select();
+    });
+  };
+
   /* ─── Layout Mode ──────────────────────────────────────────────────── */
   const applyLayoutMode = () => {
     const shell = document.querySelector(".workspace-shell");
@@ -253,6 +312,11 @@ window.__omniRendererInitialized = false;
       browserPane?.classList.remove("surface-active");
       focusedTerm?.classList.remove("visible");
       focusedTerm?.classList.add("hidden");
+      // Restore the workspace grid — applyFocusedSurface() hides it when
+      // the terminal is the focused surface, so we must un-hide it here.
+      if (selectedWorkspaceId) {
+        elements.workspaceGrid?.classList.remove("hidden");
+      }
     } else {
       applyFocusedSurface();
     }
@@ -498,7 +562,11 @@ window.__omniRendererInitialized = false;
     }
 
     if (elements.ideFrame) {
-      const nextIdeSrc = `http://127.0.0.1:${selected.idePort}/?folder=${encodeURIComponent(selected.projectPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
+      // Convert Windows path to URI-style path for VS Code web:
+      // "C:\Users\foo" → "/C:/Users/foo"
+      let folderPath = selected.projectPath.replace(/\\/g, "/");
+      if (/^[A-Za-z]:/.test(folderPath)) folderPath = "/" + folderPath;
+      const nextIdeSrc = `http://127.0.0.1:${selected.idePort}/?folder=${encodeURIComponent(folderPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
       if (currentIdeSrc !== nextIdeSrc) {
         elements.ideFrame.src = nextIdeSrc;
         currentIdeSrc = nextIdeSrc;
@@ -663,7 +731,8 @@ window.__omniRendererInitialized = false;
       portBtn.title = "Set app preview port";
       portBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        const value = window.prompt("Enter app port:", workspace.appPort ? String(workspace.appPort) : "3000");
+        const value = await showPrompt("Enter app port:", workspace.appPort ? String(workspace.appPort) : "3000");
+        if (value === null) return;
         const parsed = Number(value);
         if (!Number.isFinite(parsed) || parsed <= 0) return;
         await api.setAppPort(workspace.id, parsed);
