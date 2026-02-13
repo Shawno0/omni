@@ -201,6 +201,7 @@ window.__omniRendererInitialized = false;
   let browserTabCounter = 0;
   let activeBrowserTab = "preview";
   let browserTabs = [{ id: "preview", label: "Preview", closable: false }];
+  const workspaceBrowserTabs = new Map(); // workspaceId → { tabs, activeTab }
   let layoutMode = localStorage.getItem("omni-layout") || "overview"; // "overview" | "focused"
   let focusedSurface = localStorage.getItem("omni-focused-surface") || "ide"; // "ide" | "preview" | "terminal"
   let paletteShortcut = localStorage.getItem("omni-palette-key") || "k";
@@ -604,6 +605,48 @@ window.__omniRendererInitialized = false;
   };
 
   /* ─── Browser Tabs ────────────────────────────────────────────────── */
+  const saveBrowserTabsForWorkspace = (wsId) => {
+    if (!wsId) return;
+    const saved = [];
+    for (const tab of browserTabs) {
+      if (!tab.closable) continue; // preview is rebuilt per workspace
+      const iframe = getTabIframe(tab.id);
+      saved.push({ id: tab.id, label: tab.label, url: iframe?.src || "" });
+    }
+    workspaceBrowserTabs.set(wsId, { tabs: saved, activeTab: activeBrowserTab });
+  };
+
+  const restoreBrowserTabsForWorkspace = (wsId) => {
+    // Remove all existing custom iframes
+    for (const t of browserTabs.filter((t) => t.closable)) {
+      getTabIframe(t.id)?.remove();
+    }
+    browserTabs = browserTabs.filter((t) => !t.closable);
+
+    const saved = workspaceBrowserTabs.get(wsId);
+    if (saved && saved.tabs.length > 0) {
+      for (const entry of saved.tabs) {
+        browserTabCounter++;
+        const tabId = `tab-${browserTabCounter}`;
+        browserTabs.push({ id: tabId, label: entry.label, closable: true });
+        const iframe = document.createElement("iframe");
+        iframe.className = "surface-frame browser-frame";
+        iframe.dataset.tabId = tabId;
+        iframe.title = entry.label;
+        if (entry.url) iframe.src = entry.url;
+        elements.browserTabContent?.appendChild(iframe);
+      }
+      // Restore active tab — map old id to new id by index
+      const savedActiveIdx = saved.tabs.findIndex((t) => t.id === saved.activeTab);
+      const restoreTab = savedActiveIdx >= 0 ? browserTabs[savedActiveIdx + 1]?.id : "preview";
+      activeBrowserTab = restoreTab || "preview";
+    } else {
+      activeBrowserTab = "preview";
+    }
+    renderBrowserTabBar();
+    switchBrowserTab(activeBrowserTab);
+  };
+
   const getTabIframe = (tabId) =>
     elements.browserTabContent?.querySelector(`iframe[data-tab-id="${tabId}"]`);
 
@@ -764,7 +807,7 @@ window.__omniRendererInitialized = false;
         elements.appFrame.removeAttribute("src");
         elements.appFrame.removeAttribute("srcdoc");
       }
-      // Close all custom browser tabs
+      // Close all custom browser tabs (no workspace to save to)
       for (const t of browserTabs.filter((t) => t.closable)) {
         getTabIframe(t.id)?.remove();
       }
@@ -830,16 +873,13 @@ window.__omniRendererInitialized = false;
     if (terminalWorkspaceId !== selected.id) {
       bottomTerm?.reset();
       focusedTerm?.reset();
+
+      // Save current workspace's browser tabs before switching
+      saveBrowserTabsForWorkspace(terminalWorkspaceId);
       terminalWorkspaceId = selected.id;
 
-      // Clear custom browser tabs when switching workspaces
-      for (const t of browserTabs.filter((t) => t.closable)) {
-        getTabIframe(t.id)?.remove();
-      }
-      browserTabs = browserTabs.filter((t) => !t.closable);
-      activeBrowserTab = "preview";
-      renderBrowserTabBar();
-      switchBrowserTab("preview");
+      // Restore browser tabs for the new workspace
+      restoreBrowserTabsForWorkspace(selected.id);
     }
 
     if (terminalSessionId !== selected.id && api?.startTerminal) {
