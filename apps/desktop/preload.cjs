@@ -14,6 +14,9 @@ const omniAPI = {
   setAgentLock: (workspaceId, locked) => ipcRenderer.invoke("workspace:setAgentLock", workspaceId, locked),
   setTerminalActivity: (workspaceId, active) => ipcRenderer.invoke("workspace:setTerminalActivity", workspaceId, active),
   reportPtyOutput: (workspaceId) => ipcRenderer.invoke("workspace:ptyOutput", workspaceId),
+  startTerminal: (workspaceId) => ipcRenderer.invoke("workspace:terminal:start", workspaceId),
+  sendTerminalInput: (workspaceId, data) => ipcRenderer.invoke("workspace:terminal:input", workspaceId, data),
+  resizeTerminal: (workspaceId, cols, rows) => ipcRenderer.invoke("workspace:terminal:resize", workspaceId, cols, rows),
   listKeys: () => ipcRenderer.invoke("keys:list"),
   listProtocolDiagnostics: (limit) => ipcRenderer.invoke("diagnostics:protocol:list", limit),
   listRestoreDiagnostics: (limit) => ipcRenderer.invoke("diagnostics:restore:list", limit),
@@ -29,6 +32,12 @@ const omniAPI = {
   onWorkspaceLog: (listener) => {
     const eventName = "workspace:log";
     const wrapped = (_event, workspaceId, stream, chunk) => listener(workspaceId, stream, chunk);
+    ipcRenderer.on(eventName, wrapped);
+    return () => ipcRenderer.removeListener(eventName, wrapped);
+  },
+  onTerminalData: (listener) => {
+    const eventName = "workspace:terminal:data";
+    const wrapped = (_event, workspaceId, data) => listener(workspaceId, data);
     ipcRenderer.on(eventName, wrapped);
     return () => ipcRenderer.removeListener(eventName, wrapped);
   },

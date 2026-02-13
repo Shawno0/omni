@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>OmniContext</title>
+    <link rel="stylesheet" href="../../../../node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -121,14 +122,24 @@
             <button id="workspace-sidebar-toggle" class="btn-icon" aria-label="Toggle sidebar" title="Toggle sidebar">☰</button>
             <h2 id="workspace-title">OmniContext</h2>
           </div>
-          <div class="workspace-header-actions">
+          <div class="workspace-header-actions" style="-webkit-app-region:no-drag">
+            <div class="layout-switcher">
+              <button id="layout-overview" class="layout-btn active" title="Overview: side-by-side IDE + Preview">Overview</button>
+              <button id="layout-focused" class="layout-btn" title="Focused: full-size tabbed panes">Focused</button>
+            </div>
             <button id="quick-actions-button" class="ghost" title="Ctrl/Cmd+K">⌘K</button>
-            <button id="workspace-focus-toggle" class="ghost" aria-label="Toggle focus mode">Focus</button>
           </div>
         </header>
 
         <!-- Session Tabs -->
         <section id="session-tabs" class="session-tabs" aria-label="Session tabs"></section>
+
+        <!-- Focused-mode surface tabs (IDE / Preview / Terminal) -->
+        <nav id="focused-surface-tabs" class="focused-surface-tabs hidden">
+          <button class="focused-surface-tab active" data-surface="ide">IDE</button>
+          <button class="focused-surface-tab" data-surface="preview">Preview</button>
+          <button class="focused-surface-tab" data-surface="terminal">Terminal</button>
+        </nav>
 
         <!-- Workspace Stage (IDE + Browser) -->
         <section class="workspace-stage">
@@ -150,6 +161,10 @@
               <iframe id="app-frame" class="surface-frame" title="Browser"></iframe>
             </div>
           </div>
+          <!-- Focused-mode: full-size terminal pane -->
+          <div id="focused-terminal" class="focused-terminal-pane hidden">
+            <div id="focused-terminal-container" class="xterm-container"></div>
+          </div>
           <div id="workspace-empty" class="workspace-empty visible">
             <div class="workspace-empty-icon">⎔</div>
             <h3>No workspace open</h3>
@@ -169,11 +184,7 @@
 
           <!-- Terminal Tab -->
           <div class="bottom-tab-content active" data-tab-content="terminal">
-            <div class="terminal-controls">
-              <input id="terminal-input" placeholder="Enter command..." />
-              <button id="terminal-run" class="btn-secondary">Run</button>
-            </div>
-            <pre id="terminal-output">No terminal output yet.</pre>
+            <div id="terminal-container" class="xterm-container"></div>
           </div>
 
           <!-- Diagnostics Tab -->
@@ -219,6 +230,8 @@
       </div>
     </div>
 
+    <script src="../../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="../../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="./renderer.js" defer></script>
     <script>
       (() => {

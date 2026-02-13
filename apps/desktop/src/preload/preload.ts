@@ -17,6 +17,8 @@ const omniAPI = {
   startTerminal: (workspaceId: string) => ipcRenderer.invoke("workspace:terminal:start", workspaceId),
   sendTerminalInput: (workspaceId: string, data: string) =>
     ipcRenderer.invoke("workspace:terminal:input", workspaceId, data),
+  resizeTerminal: (workspaceId: string, cols: number, rows: number) =>
+    ipcRenderer.invoke("workspace:terminal:resize", workspaceId, cols, rows),
   listKeys: () => ipcRenderer.invoke("keys:list"),
   listProtocolDiagnostics: (limit?: number) => ipcRenderer.invoke("diagnostics:protocol:list", limit),
   listRestoreDiagnostics: (limit?: number) => ipcRenderer.invoke("diagnostics:restore:list", limit),
@@ -37,10 +39,10 @@ const omniAPI = {
     ipcRenderer.on(eventName, wrapped);
     return () => ipcRenderer.removeListener(eventName, wrapped);
   },
-  onTerminalData: (listener: (workspaceId: string, stream: "stdout" | "stderr", chunk: string) => void) => {
+  onTerminalData: (listener: (workspaceId: string, data: string) => void) => {
     const eventName = "workspace:terminal:data";
-    const wrapped = (_event: Electron.IpcRendererEvent, workspaceId: string, stream: "stdout" | "stderr", chunk: string) =>
-      listener(workspaceId, stream, chunk);
+    const wrapped = (_event: Electron.IpcRendererEvent, workspaceId: string, data: string) =>
+      listener(workspaceId, data);
     ipcRenderer.on(eventName, wrapped);
     return () => ipcRenderer.removeListener(eventName, wrapped);
   },

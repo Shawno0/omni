@@ -26,11 +26,11 @@ interface WorkspaceRuntime {
 
 interface WorkspaceManagerOptions {
   onProcessOutput?: (workspaceId: string, stream: "stdout" | "stderr", chunk: string) => void;
-  onTerminalOutput?: (workspaceId: string, stream: "stdout" | "stderr", chunk: string) => void;
+  onTerminalOutput?: (workspaceId: string, data: string) => void;
 }
 
 interface TerminalRuntime {
-  process: ChildProcessWithoutNullStreams | null;
+  pty: import("node-pty").IPty | null;
 }
 
 export class WorkspaceManager {
@@ -77,7 +77,7 @@ export class WorkspaceManager {
 
     this.workspaces.set(id, workspace);
     this.runtimes.set(id, { logs: [], process: null });
-    this.terminals.set(id, { process: null });
+    this.terminals.set(id, { pty: null });
 
     return workspace;
   }
@@ -109,7 +109,7 @@ export class WorkspaceManager {
 
     this.workspaces.set(workspace.id, workspace);
     this.runtimes.set(workspace.id, { logs: [], process: null });
-    this.terminals.set(workspace.id, { process: null });
+    this.terminals.set(workspace.id, { pty: null });
     return workspace;
   }
 
@@ -219,12 +219,12 @@ export class WorkspaceManager {
     const terminal = this.terminals.get(workspaceId);
 
     runtime?.process?.kill();
-    terminal?.process?.kill();
+    terminal?.pty?.kill();
     if (runtime) {
       runtime.process = null;
     }
     if (terminal) {
-      terminal.process = null;
+      terminal.pty = null;
     }
 
     workspace.status = "stopped";
@@ -238,7 +238,7 @@ export class WorkspaceManager {
     const runtime = this.runtimes.get(workspaceId);
     const terminal = this.terminals.get(workspaceId);
     runtime?.process?.kill();
-    terminal?.process?.kill();
+    terminal?.pty?.kill();
 
     this.workspaces.delete(workspaceId);
     this.runtimes.delete(workspaceId);
@@ -247,60 +247,74 @@ export class WorkspaceManager {
 
   public startTerminal(workspaceId: string): void {
     const workspace = this.mustGet(workspaceId);
-    const terminal = this.terminals.get(workspaceId) ?? { process: null };
+    const terminal = this.terminals.get(workspaceId) ?? { pty: null };
 
-    if (terminal.process && !terminal.process.killed) {
+    if (terminal.pty) {
       return;
     }
 
-    const shell = this.resolveTerminalShell();
-    const child = spawn(shell.command, shell.args, {
-      cwd: workspace.projectPath,
-      windowsHide: true,
-      env: {
-        ...process.env,
-        OMNI_WORKSPACE_ID: workspace.id,
-        OMNI_WORKSPACE_SLUG: workspace.slug,
-      },
-      stdio: "pipe",
-    });
+    const emit = (msg: string) => this.options.onTerminalOutput?.(workspace.id, msg);
 
-    child.stdout.on("data", (chunk: Buffer) => {
-      this.options.onTerminalOutput?.(workspace.id, "stdout", chunk.toString("utf8"));
-    });
+    try {
+      emit("\x1b[90m[omni] Loading node-pty...\x1b[0m\r\n");
+      const nodePty = require("node-pty") as typeof import("node-pty");
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      this.options.onTerminalOutput?.(workspace.id, "stderr", chunk.toString("utf8"));
-    });
+      const shell = this.resolveTerminalShell();
+      const cwd = workspace.projectPath || process.cwd();
+      emit(`\x1b[90m[omni] Spawning ${shell.command} in ${cwd}\x1b[0m\r\n`);
 
-    child.on("exit", () => {
-      const runtime = this.terminals.get(workspace.id);
-      if (runtime) {
-        runtime.process = null;
-      }
-    });
+      const ptyProcess = nodePty.spawn(shell.command, shell.args, {
+        name: "xterm-256color",
+        cols: 80,
+        rows: 24,
+        cwd,
+        env: {
+          ...process.env,
+          OMNI_WORKSPACE_ID: workspace.id,
+          OMNI_WORKSPACE_SLUG: workspace.slug,
+        } as Record<string, string>,
+      });
 
-    child.on("error", (error) => {
-      const message = error instanceof Error ? error.message : "Unknown terminal error";
-      this.options.onTerminalOutput?.(workspace.id, "stderr", `Terminal failed to start: ${message}\n`);
-    });
+      emit(`\x1b[90m[omni] PTY spawned (PID ${ptyProcess.pid})\x1b[0m\r\n`);
 
-    terminal.process = child;
-    this.terminals.set(workspace.id, terminal);
+      ptyProcess.onData((data: string) => {
+        emit(data);
+      });
+
+      ptyProcess.onExit(() => {
+        const runtime = this.terminals.get(workspace.id);
+        if (runtime) {
+          runtime.pty = null;
+        }
+      });
+
+      terminal.pty = ptyProcess;
+      this.terminals.set(workspace.id, terminal);
+    } catch (error) {
+      const message = error instanceof Error ? error.stack ?? error.message : "Unknown error starting terminal";
+      emit(`\x1b[31m[omni] Failed to start terminal:\r\n${message}\x1b[0m\r\n`);
+    }
   }
 
   public sendTerminalInput(workspaceId: string, data: string): void {
     const terminal = this.terminals.get(workspaceId);
-    if (!terminal?.process || terminal.process.killed) {
+    if (!terminal?.pty) {
       this.startTerminal(workspaceId);
     }
 
     const runtime = this.terminals.get(workspaceId);
-    if (!runtime?.process || runtime.process.killed) {
+    if (!runtime?.pty) {
       throw new Error("Terminal is not available for this workspace");
     }
 
-    runtime.process.stdin.write(data);
+    runtime.pty.write(data);
+  }
+
+  public resizeTerminal(workspaceId: string, cols: number, rows: number): void {
+    const terminal = this.terminals.get(workspaceId);
+    if (terminal?.pty) {
+      terminal.pty.resize(cols, rows);
+    }
   }
 
   public setAppPort(workspaceId: string, appPort: number): WorkspaceInfo {
@@ -467,8 +481,17 @@ export class WorkspaceManager {
 
   private resolveTerminalShell(): { command: string; args: string[] } {
     if (process.platform === "win32") {
-      const command = process.env.COMSPEC || "cmd.exe";
-      return { command, args: [] };
+      // Prefer PowerShell for better PTY support on Windows
+      const pwsh = process.env.ProgramFiles ? `${process.env.ProgramFiles}\\PowerShell\\7\\pwsh.exe` : "";
+      if (pwsh && fs.existsSync(pwsh)) {
+        return { command: pwsh, args: ["-NoLogo"] };
+      }
+      // Fall back to Windows PowerShell, then cmd.exe
+      const winPowershell = `${process.env.SystemRoot ?? "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+      if (fs.existsSync(winPowershell)) {
+        return { command: winPowershell, args: ["-NoLogo"] };
+      }
+      return { command: process.env.COMSPEC || "cmd.exe", args: [] };
     }
 
     const command = process.env.SHELL || "bash";

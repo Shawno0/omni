@@ -8,21 +8,27 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "rebuild:native": "electron-rebuild -f -w node-pty",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepare:runtime": "pwsh -ExecutionPolicy Bypass -File ./scripts/ensureCodeServer.ps1",
     "dev": "npm run prepare:runtime && npm run build && electron .",
+    "postinstall": "electron-rebuild -w node-pty",
     "start": "npm run prepare:runtime && electron .",
     "package:win": "npm run prepare:runtime && npm run build && electron-builder --config electron-builder.yml --win",
     "protocol:register": "pwsh -ExecutionPolicy Bypass -File ./scripts/registerProtocol.ps1",
     "protocol:validate": "pwsh -ExecutionPolicy Bypass -File ./scripts/validateProtocol.ps1"
   },
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
     "pidtree": "^0.6.0",
     "pidusage": "^3.0.2"
   },
   "devDependencies": {
-    "@types/pidusage": "^2.0.5",
+    "@electron/rebuild": "^3.6.1",
     "@types/node": "^22.10.2",
+    "@types/pidusage": "^2.0.5",
     "electron": "33.2.1",
     "electron-builder": "^25.1.8",
     "typescript": "^5.7.3"

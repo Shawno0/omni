@@ -1,3 +1,8 @@
+// Guard against double-execution (script tag + executeJavaScript fallback race)
+if (window.__omniRendererLoaded) {
+  // Already loaded via <script> tag — skip re-injection
+} else {
+window.__omniRendererLoaded = true;
 window.__omniRendererInitialized = false;
 
 (() => {
@@ -9,7 +14,6 @@ window.__omniRendererInitialized = false;
     appShell: el("app"),
     sidebarToggle: el("sidebar-toggle"),
     workspaceSidebarToggle: el("workspace-sidebar-toggle"),
-    workspaceFocusToggle: el("workspace-focus-toggle"),
     workspaceStatus: el("workspace-status"),
     workspaceGrid: el("workspace-grid"),
     workspaceEmpty: el("workspace-empty"),
@@ -17,9 +21,6 @@ window.__omniRendererInitialized = false;
     surfaceSplitter: el("surface-splitter"),
     ideFrame: el("ide-frame"),
     appFrame: el("app-frame"),
-    terminalOutput: el("terminal-output"),
-    terminalInput: el("terminal-input"),
-    terminalRun: el("terminal-run"),
     diagnostics: el("diagnostics"),
     workspaceList: el("workspace-list"),
     projectPath: el("project-path"),
@@ -50,6 +51,123 @@ window.__omniRendererInitialized = false;
     deleteAnthropic: el("delete-anthropic"),
     anthropicKey: el("anthropic-key"),
     keyList: el("key-list"),
+    layoutOverview: el("layout-overview"),
+    layoutFocused: el("layout-focused"),
+    focusedSurfaceTabs: el("focused-surface-tabs"),
+    focusedTerminal: el("focused-terminal"),
+    terminalContainer: el("terminal-container"),
+    focusedTerminalContainer: el("focused-terminal-container"),
+  };
+
+  /* ─── xterm.js Instances ──────────────────────────────────────────── */
+  const Terminal = window.Terminal;
+  const FitAddon = window.FitAddon;
+  let bottomTerm = null;
+  let bottomFit = null;
+  let focusedTerm = null;
+  let focusedFit = null;
+
+  const xtermTheme = {
+    background: "#0f1115",
+    foreground: "#d4d7de",
+    cursor: "#d4d7de",
+    cursorAccent: "#0f1115",
+    selectionBackground: "rgba(99,130,191,0.3)",
+    black: "#0f1115",
+    red: "#f87171",
+    green: "#4ade80",
+    yellow: "#facc15",
+    blue: "#60a5fa",
+    magenta: "#c084fc",
+    cyan: "#22d3ee",
+    white: "#d4d7de",
+    brightBlack: "#555a66",
+    brightRed: "#fca5a5",
+    brightGreen: "#86efac",
+    brightYellow: "#fde68a",
+    brightBlue: "#93c5fd",
+    brightMagenta: "#d8b4fe",
+    brightCyan: "#67e8f9",
+    brightWhite: "#f0f1f4",
+  };
+
+  const createXtermInstance = (container) => {
+    if (!Terminal || !FitAddon || !container) return null;
+    const fitAddon = new FitAddon.FitAddon();
+    const term = new Terminal({
+      theme: xtermTheme,
+      fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
+      fontSize: 13,
+      lineHeight: 1.4,
+      cursorBlink: true,
+      cursorStyle: "bar",
+      allowProposedApi: true,
+      scrollback: 5000,
+    });
+    term.loadAddon(fitAddon);
+    term.open(container);
+    // Small delay before first fit to let layout settle
+    requestAnimationFrame(() => { try { fitAddon.fit(); } catch {} });
+    return { term, fitAddon };
+  };
+
+  const initTerminals = () => {
+    // Diagnostic: log what globals are available
+    const diag = [];
+    diag.push(`Terminal=${typeof Terminal} (${Terminal ? 'ok' : 'MISSING'})`);
+    diag.push(`FitAddon=${typeof FitAddon} (${FitAddon ? 'ok' : 'MISSING'})`);
+    diag.push(`container=${elements.terminalContainer ? 'ok' : 'MISSING'}`);
+    diag.push(`focusedContainer=${elements.focusedTerminalContainer ? 'ok' : 'MISSING'}`);
+
+    const b = createXtermInstance(elements.terminalContainer);
+    if (b) {
+      bottomTerm = b.term;
+      bottomFit = b.fitAddon;
+      bottomTerm.onData((data) => {
+        if (selectedWorkspaceId && api?.sendTerminalInput) {
+          api.sendTerminalInput(selectedWorkspaceId, data);
+        }
+      });
+      // Write init diagnostics into the terminal so they're visible
+      bottomTerm.write(`\x1b[36m[xterm] ${diag.join(', ')}\x1b[0m\r\n`);
+      bottomTerm.write(`\x1b[36m[xterm] bottomTerm created successfully\x1b[0m\r\n`);
+    } else {
+      // Terminal creation failed — show diagnostics in the container itself
+      if (elements.terminalContainer) {
+        elements.terminalContainer.innerHTML = `<pre style="color:#f87171;padding:8px;font:12px monospace;">[xterm init failed]\n${diag.join('\n')}</pre>`;
+      }
+    }
+    const f = createXtermInstance(elements.focusedTerminalContainer);
+    if (f) {
+      focusedTerm = f.term;
+      focusedFit = f.fitAddon;
+      focusedTerm.onData((data) => {
+        if (selectedWorkspaceId && api?.sendTerminalInput) {
+          api.sendTerminalInput(selectedWorkspaceId, data);
+        }
+      });
+    }
+
+    // Prevent the scrollable tab-content parent from capturing Space/PageUp/PageDown
+    // when the terminal is focused. xterm handles these keys internally.
+    const termTabContent = elements.terminalContainer?.closest(".bottom-tab-content");
+    if (termTabContent) {
+      termTabContent.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "PageUp" || e.key === "PageDown") {
+          e.preventDefault();
+        }
+      });
+    }
+  };
+
+  const fitAllTerminals = () => {
+    try { bottomFit?.fit(); } catch {}
+    try { focusedFit?.fit(); } catch {}
+    // Send resize to backend for whichever terminal is visible
+    const activeTerm = layoutMode === "focused" && focusedSurface === "terminal" ? focusedTerm : bottomTerm;
+    if (activeTerm && selectedWorkspaceId && api?.resizeTerminal) {
+      api.resizeTerminal(selectedWorkspaceId, activeTerm.cols, activeTerm.rows);
+    }
   };
 
   /* ─── State ───────────────────────────────────────────────────────── */
@@ -68,9 +186,9 @@ window.__omniRendererInitialized = false;
   let workspacesUpdateTimer;
   let applyingWorkspaceUpdate = false;
   let terminalSessionId;
-  let focusMode = localStorage.getItem("omni-focus-mode") === "true";
-  let sidebarPeek = false;
   let ideRatio = Number(localStorage.getItem("omni-ide-ratio") || "50");
+  let layoutMode = localStorage.getItem("omni-layout") || "overview"; // "overview" | "focused"
+  let focusedSurface = localStorage.getItem("omni-focused-surface") || "ide"; // "ide" | "preview" | "terminal"
   let paletteShortcut = localStorage.getItem("omni-palette-key") || "k";
   let restartShortcut = localStorage.getItem("omni-restart-key") || "r";
 
@@ -106,18 +224,99 @@ window.__omniRendererInitialized = false;
   const updateSidebarState = () => {
     if (!elements.appShell) return;
     elements.appShell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
-    elements.appShell.classList.toggle("workspace-focus", focusMode);
-    elements.appShell.classList.toggle("sidebar-peek", focusMode && sidebarPeek);
+  };
 
-    if (elements.workspaceFocusToggle) {
-      elements.workspaceFocusToggle.textContent = focusMode ? "Exit Focus" : "Focus";
+  /* ─── Layout Mode ──────────────────────────────────────────────────── */
+  const applyLayoutMode = () => {
+    const shell = document.querySelector(".workspace-shell");
+    if (!shell) return;
+
+    const isOverview = layoutMode === "overview";
+    shell.classList.toggle("layout-focused", !isOverview);
+
+    // Toggle layout button active states
+    elements.layoutOverview?.classList.toggle("active", isOverview);
+    elements.layoutFocused?.classList.toggle("active", !isOverview);
+
+    // Show/hide focused surface tabs
+    elements.focusedSurfaceTabs?.classList.toggle("hidden", isOverview);
+
+    // In overview, show both panes + splitter, hide focused terminal
+    // In focused, show only the active surface pane
+    const idePane = elements.workspaceGrid?.querySelector(".surface-ide");
+    const browserPane = elements.workspaceGrid?.querySelector(".surface-browser");
+    const splitter = elements.surfaceSplitter;
+    const focusedTerm = elements.focusedTerminal;
+
+    if (isOverview) {
+      idePane?.classList.remove("surface-active");
+      browserPane?.classList.remove("surface-active");
+      focusedTerm?.classList.remove("visible");
+      focusedTerm?.classList.add("hidden");
+    } else {
+      applyFocusedSurface();
     }
 
-    if (elements.workspaceSidebarToggle) {
-      elements.workspaceSidebarToggle.textContent = focusMode
-        ? (sidebarPeek ? "✕" : "☰")
-        : (sidebarCollapsed ? "☰" : "☰");
+    // Re-fit terminals after layout change
+    requestAnimationFrame(() => fitAllTerminals());
+  };
+
+  const applyFocusedSurface = () => {
+    const idePane = elements.workspaceGrid?.querySelector(".surface-ide");
+    const browserPane = elements.workspaceGrid?.querySelector(".surface-browser");
+    const focusedTerm = elements.focusedTerminal;
+
+    // Update tab active states
+    document.querySelectorAll(".focused-surface-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.surface === focusedSurface);
+    });
+
+    const showIde = focusedSurface === "ide";
+    const showPreview = focusedSurface === "preview";
+    const showTerminal = focusedSurface === "terminal";
+
+    idePane?.classList.toggle("surface-active", showIde);
+    browserPane?.classList.toggle("surface-active", showPreview);
+
+    if (focusedTerm) {
+      focusedTerm.classList.toggle("visible", showTerminal);
+      focusedTerm.classList.toggle("hidden", !showTerminal);
     }
+
+    // Hide/show the workspace grid when terminal is focused
+    if (showTerminal) {
+      elements.workspaceGrid?.classList.add("hidden");
+    } else if (selectedWorkspaceId) {
+      elements.workspaceGrid?.classList.remove("hidden");
+    }
+
+    // Re-fit terminals when switching surfaces
+    requestAnimationFrame(() => fitAllTerminals());
+  };
+
+  const bindLayoutSwitcher = () => {
+    elements.layoutOverview?.addEventListener("click", () => {
+      layoutMode = "overview";
+      localStorage.setItem("omni-layout", "overview");
+      applyLayoutMode();
+    });
+
+    elements.layoutFocused?.addEventListener("click", () => {
+      layoutMode = "focused";
+      localStorage.setItem("omni-layout", "focused");
+      applyLayoutMode();
+    });
+
+    // Focused surface tabs
+    document.querySelectorAll(".focused-surface-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        focusedSurface = tab.dataset.surface || "ide";
+        localStorage.setItem("omni-focused-surface", focusedSurface);
+        applyFocusedSurface();
+      });
+    });
+
+    // Focused terminal input/run — handled by xterm onData, no manual wiring needed
   };
 
   /* ─── IDE Ratio / Splitter ────────────────────────────────────────── */
@@ -192,6 +391,10 @@ window.__omniRendererInitialized = false;
         const target = tab.dataset.tab;
         tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === target));
         contents.forEach((c) => c.classList.toggle("active", c.dataset.tabContent === target));
+        // Re-fit terminal when its tab becomes visible
+        if (target === "terminal") {
+          requestAnimationFrame(() => { try { bottomFit?.fit(); } catch {} });
+        }
       });
     });
   };
@@ -279,7 +482,8 @@ window.__omniRendererInitialized = false;
       usingAppSrcDoc = false;
       terminalWorkspaceId = undefined;
       terminalSessionId = undefined;
-      if (elements.terminalOutput) elements.terminalOutput.textContent = "No terminal output yet.";
+      bottomTerm?.reset();
+      focusedTerm?.reset();
       if (elements.workspaceTitle) elements.workspaceTitle.textContent = "OmniContext";
       setStatus("Select or create a workspace to begin.");
       return;
@@ -320,24 +524,21 @@ window.__omniRendererInitialized = false;
       }
     }
 
-    if (elements.terminalOutput && terminalWorkspaceId !== selected.id) {
-      elements.terminalOutput.textContent = `Terminal ready \u2022 ${selected.projectPath}`;
+    if (terminalWorkspaceId !== selected.id) {
+      bottomTerm?.reset();
+      focusedTerm?.reset();
       terminalWorkspaceId = selected.id;
     }
 
     if (terminalSessionId !== selected.id && api?.startTerminal) {
       await api.startTerminal(selected.id);
       terminalSessionId = selected.id;
+      // Fit terminals after layout settles (double-RAF + timeout for reliability)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => fitAllTerminals());
+      });
+      setTimeout(() => fitAllTerminals(), 200);
     }
-  };
-
-  /* ─── Terminal ────────────────────────────────────────────────────── */
-  const runTerminalCommand = async () => {
-    if (!selectedWorkspaceId || !api?.sendTerminalInput || !elements.terminalInput) return;
-    const value = String(elements.terminalInput.value || "");
-    if (!value.trim()) return;
-    await api.sendTerminalInput(selectedWorkspaceId, `${value}\n`);
-    elements.terminalInput.value = "";
   };
 
   /* ─── Workspace List ──────────────────────────────────────────────── */
@@ -640,12 +841,6 @@ window.__omniRendererInitialized = false;
       localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
       updateSidebarState();
     }},
-    { group: "View", title: "Toggle Focus Mode", key: "f", action: () => {
-      focusMode = !focusMode;
-      localStorage.setItem("omni-focus-mode", String(focusMode));
-      if (!focusMode) sidebarPeek = false;
-      updateSidebarState();
-    }},
   ];
 
   let quickActiveIndex = 0;
@@ -909,7 +1104,9 @@ window.__omniRendererInitialized = false;
 
     updateSidebarState();
     applyIdeRatio(ideRatio);
+    applyLayoutMode();
     bindSurfaceSplitter();
+    bindLayoutSwitcher();
     bindPanelCardToggles();
     bindBottomPanelTabs();
     bindQuickActions();
@@ -917,28 +1114,19 @@ window.__omniRendererInitialized = false;
     bindSettings();
     bindWorkspaceFilters();
 
+    // Clear any stuck focus-mode state from previous versions
+    localStorage.removeItem("omni-focus-mode");
+
     // Sidebar toggle
     elements.sidebarToggle?.addEventListener("click", () => {
       sidebarCollapsed = !sidebarCollapsed;
       localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
-      if (focusMode) sidebarPeek = !sidebarPeek;
       updateSidebarState();
     });
 
     elements.workspaceSidebarToggle?.addEventListener("click", () => {
-      if (focusMode) {
-        sidebarPeek = !sidebarPeek;
-      } else {
-        sidebarCollapsed = !sidebarCollapsed;
-        localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
-      }
-      updateSidebarState();
-    });
-
-    elements.workspaceFocusToggle?.addEventListener("click", () => {
-      focusMode = !focusMode;
-      localStorage.setItem("omni-focus-mode", String(focusMode));
-      if (!focusMode) sidebarPeek = false;
+      sidebarCollapsed = !sidebarCollapsed;
+      localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
       updateSidebarState();
     });
 
@@ -976,13 +1164,14 @@ window.__omniRendererInitialized = false;
     elements.protocolWorkspaceFilter?.addEventListener("change", renderProtocolDiagnostics);
     elements.protocolSeverityFilter?.addEventListener("change", renderProtocolDiagnostics);
 
-    // Terminal
-    elements.terminalRun?.addEventListener("click", () => void runTerminalCommand());
-    elements.terminalInput?.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      void runTerminalCommand();
-    });
+    // Initialize xterm.js terminals
+    try { initTerminals(); } catch (e) { console.warn("xterm init failed:", e); }
+    window.addEventListener("resize", () => fitAllTerminals());
+    // Observe bottom panel resizes for terminal fit
+    const bottomPanel = document.querySelector(".bottom-panel");
+    if (bottomPanel && typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => { try { bottomFit?.fit(); } catch {} }).observe(bottomPanel);
+    }
 
     // IPC listeners
     api.onWorkspacesUpdated((payload) => {
@@ -990,19 +1179,10 @@ window.__omniRendererInitialized = false;
       scheduleWorkspaceUpdateFlush();
     });
 
-    api.onTerminalData((workspaceId, stream, chunk) => {
-      if (workspaceId !== selectedWorkspaceId || !elements.terminalOutput) return;
-
-      const lines = String(chunk).split(/\r?\n/).filter((l) => l.length > 0);
-      if (lines.length === 0) return;
-
-      const existing = elements.terminalOutput.textContent === "No terminal output yet."
-        ? []
-        : String(elements.terminalOutput.textContent || "").split(/\r?\n/);
-
-      const merged = [...existing, ...lines.map((l) => `${stream === "stderr" ? "[err]" : "[out]"} ${l}`)].slice(-400);
-      elements.terminalOutput.textContent = merged.join("\n");
-      elements.terminalOutput.scrollTop = elements.terminalOutput.scrollHeight;
+    api.onTerminalData((workspaceId, data) => {
+      if (workspaceId !== selectedWorkspaceId) return;
+      bottomTerm?.write(data);
+      focusedTerm?.write(data);
     });
 
     api.onProtocolDiagnosticsUpdated((events) => {
@@ -1027,3 +1207,4 @@ window.__omniRendererInitialized = false;
 
   void init();
 })();
+} // end double-execution guard

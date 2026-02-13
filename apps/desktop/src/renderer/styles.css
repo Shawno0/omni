@@ -291,30 +291,6 @@ button {
   pointer-events: none;
 }
 
-.app-shell.workspace-focus {
-  grid-template-columns: 0px 1fr;
-}
-
-.app-shell.workspace-focus .sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
-  width: var(--sidebar-width);
-  transform: translateX(-100%);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    transform var(--duration-normal) var(--ease-out),
-    opacity var(--duration-normal) var(--ease-out);
-  z-index: 50;
-  box-shadow: var(--shadow-xl);
-}
-
-.app-shell.workspace-focus.sidebar-peek .sidebar {
-  transform: translateX(0);
-  opacity: 1;
-  pointer-events: auto;
-}
-
 /* --- Sidebar ---------------------------------------------------------- */
 .sidebar {
   background: var(--bg-surface);
@@ -736,7 +712,7 @@ button {
 /* --- Workspace Shell (Main Area) -------------------------------------- */
 .workspace-shell {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
   height: 100vh;
   overflow: hidden;
   background: var(--bg-base);
@@ -744,6 +720,7 @@ button {
 
 /* Workspace Header */
 .workspace-header {
+  grid-row: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -765,7 +742,8 @@ button {
 
 .workspace-header-actions {
   display: flex;
-  gap: var(--sp-1);
+  align-items: center;
+  gap: var(--sp-2);
   -webkit-app-region: no-drag;
 }
 
@@ -774,8 +752,42 @@ button {
   color: var(--text-secondary);
 }
 
+/* Layout switcher */
+.layout-switcher {
+  display: flex;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 1px;
+}
+
+.layout-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  transition:
+    background var(--duration-fast) ease,
+    color var(--duration-fast) ease;
+}
+
+.layout-btn:hover {
+  color: var(--text-secondary);
+}
+
+.layout-btn.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
 /* --- Session Tabs ----------------------------------------------------- */
 .session-tabs {
+  grid-row: 2;
   display: flex;
   align-items: stretch;
   overflow-x: auto;
@@ -829,6 +841,7 @@ button {
 
 /* --- Workspace Stage -------------------------------------------------- */
 .workspace-stage {
+  grid-row: 4;
   min-height: 0;
   overflow: hidden;
   position: relative;
@@ -948,8 +961,86 @@ button {
   color: var(--text-tertiary);
 }
 
+/* --- Focused Surface Tabs --------------------------------------------- */
+.focused-surface-tabs {
+  grid-row: 3;
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 var(--sp-3);
+  gap: 0;
+  min-height: 32px;
+  flex-shrink: 0;
+}
+
+.focused-surface-tab {
+  position: relative;
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  white-space: nowrap;
+  transition:
+    color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
+}
+
+.focused-surface-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.focused-surface-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* --- Focused Layout Mode ---------------------------------------------- */
+.workspace-shell.layout-focused .workspace-stage {
+  grid-template-rows: 1fr;
+}
+
+.workspace-shell.layout-focused .bottom-panel {
+  display: none;
+}
+
+/* In focused mode, only the active surface shows */
+.workspace-shell.layout-focused .surface-pane {
+  display: none;
+}
+.workspace-shell.layout-focused .surface-pane.surface-active {
+  display: flex;
+  flex: 1 1 100%;
+}
+.workspace-shell.layout-focused .surface-splitter {
+  display: none;
+}
+
+/* Focused terminal pane */
+.focused-terminal-pane {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.focused-terminal-pane.visible {
+  display: flex;
+}
+.focused-terminal-pane .xterm-container {
+  flex: 1;
+  min-height: 0;
+}
+
 /* --- Bottom Panel (Terminal + Diagnostics Tabs) ----------------------- */
 .bottom-panel {
+  grid-row: 5;
   border-top: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   display: flex;
@@ -1009,23 +1100,16 @@ button {
   gap: var(--sp-2);
 }
 
-/* Terminal */
-.terminal-controls {
-  display: flex;
-  gap: var(--sp-2);
-  flex-shrink: 0;
-}
-
-.terminal-controls input {
+/* xterm container */
+.xterm-container {
   flex: 1;
-  min-width: 0;
-  font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-  font-size: 12px;
-  padding: 6px 10px;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.terminal-controls button {
-  flex-shrink: 0;
+.xterm-container .xterm {
+  height: 100%;
+  padding: 4px;
 }
 
 /* Diagnostics filters */

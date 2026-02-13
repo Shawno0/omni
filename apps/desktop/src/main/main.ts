@@ -11,6 +11,7 @@ import { KeyVault } from "./security/KeyVault.js";
 import { SessionStore } from "./state/SessionStore.js";
 import type { WorkspaceCreateInput } from "./types.js";
 
+
 const ptyActivityBridge = new PTYActivityBridge({
   onTerminalActivity: (workspaceId, active) => {
     try {
@@ -27,9 +28,9 @@ const workspaceManager = new WorkspaceManager({
     ptyActivityBridge.recordOutput(workspaceId);
     shellWindow?.webContents.send("workspace:log", workspaceId, stream, chunk);
   },
-  onTerminalOutput: (workspaceId, stream, chunk) => {
+  onTerminalOutput: (workspaceId, data) => {
     ptyActivityBridge.recordOutput(workspaceId);
-    shellWindow?.webContents.send("workspace:terminal:data", workspaceId, stream, chunk);
+    shellWindow?.webContents.send("workspace:terminal:data", workspaceId, data);
   },
 });
 const ptyHeartbeatServer = new PTYHeartbeatServer({
@@ -84,10 +85,25 @@ const activityMonitor = new ActivityMonitor({
 });
 
 async function persistWorkspaceState(): Promise<void> {
+  const workspaces = workspaceManager.toPersistedState();
+  // Never overwrite persisted sessions with an empty list unless the
+  // store was already empty — this prevents accidental data loss when
+  // the app exits before restore completes.
+  if (workspaces.length === 0) {
+    try {
+      const existing = await sessionStore.load();
+      if (existing.workspaces.length > 0) {
+        return;
+      }
+    } catch {
+      // If we can't read existing state, skip the save to be safe.
+      return;
+    }
+  }
   await sessionStore.save({
     version: 1,
     focusedWorkspaceId,
-    workspaces: workspaceManager.toPersistedState(),
+    workspaces,
   });
 }
 
@@ -159,12 +175,14 @@ function createShellWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => {
     void (async () => {
       try {
-        const initialized = await window.webContents.executeJavaScript(
-          "window.__omniRendererInitialized === true",
+        // Check if renderer.js has already been loaded (either fully initialized
+        // or at least started loading via the <script defer> tag).
+        const alreadyLoaded = await window.webContents.executeJavaScript(
+          "window.__omniRendererLoaded === true || window.__omniRendererInitialized === true",
           true,
         );
 
-        if (initialized === true) {
+        if (alreadyLoaded === true) {
           return;
         }
 
@@ -312,6 +330,10 @@ function registerIpc(): void {
     workspaceManager.sendTerminalInput(workspaceId, data);
   });
 
+  ipcMain.handle("workspace:terminal:resize", (_event, workspaceId: string, cols: number, rows: number) => {
+    workspaceManager.resizeTerminal(workspaceId, cols, rows);
+  });
+
   ipcMain.handle("keys:list", async () => keyVault.list());
   ipcMain.handle("keys:set", async (_event, provider: "anthropic" | "openai", value: string) => {
     await keyVault.set(provider, value);
@@ -431,4 +453,7 @@ async function bootstrap(): Promise<void> {
   });
 }
 
-void bootstrap();
+void bootstrap().catch((err) => {
+  console.error("[BOOTSTRAP] Fatal error:", err);
+  app.quit();
+});
