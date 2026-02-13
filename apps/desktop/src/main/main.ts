@@ -180,10 +180,18 @@ function createShellWindow(): BrowserWindow {
   void window.loadFile(rendererPath);
 
   // Allow popups from iframes (OAuth flows, external links, etc.)
-  // Open them in the user's default system browser instead of blocking them.
+  // Open them as Electron windows so OAuth redirects to virtual hostnames
+  // (*.local, *.ide) flow through the protocol handler and share cookies.
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http://") || url.startsWith("https://")) {
-      void shell.openExternal(url);
+      return {
+        action: "allow",
+        overrideBrowserWindowOptions: {
+          width: 600,
+          height: 750,
+          autoHideMenuBar: true,
+        },
+      };
     }
     return { action: "deny" };
   });
@@ -470,6 +478,48 @@ async function bootstrap(): Promise<void> {
     }
     callback({ cancel: false, responseHeaders: headers });
   });
+
+  // Redirect WebSocket connections from virtual hostnames (*.local, *.ide)
+  // to the actual localhost port. protocol.handle("http") does not intercept
+  // WebSocket upgrade requests, so we use webRequest.onBeforeRequest instead.
+  // NOTE: Chromium's URL match-patterns don't support ws:// scheme, so we
+  // omit the URL filter entirely and check hostname + resourceType inside.
+  session.defaultSession.webRequest.onBeforeRequest(
+    (details, callback) => {
+      // Only redirect WebSocket requests — HTTP is handled by protocol.handle
+      if (details.resourceType !== "webSocket") {
+        callback({});
+        return;
+      }
+      let parsed: URL;
+      try {
+        // ws:// URLs need to be parsed; swap scheme so URL constructor accepts it
+        const httpUrl = details.url.replace(/^ws:/, "http:").replace(/^wss:/, "https:");
+        parsed = new URL(httpUrl);
+      } catch {
+        callback({});
+        return;
+      }
+      const host = parsed.hostname.toLowerCase();
+      const workspaces = workspaceManager.list();
+      const workspace = workspaces.find(
+        (w) => w.appHost === host || w.ideHost === host,
+      );
+      if (workspace) {
+        const port = workspace.appHost === host ? workspace.appPort : workspace.idePort;
+        if (port) {
+          // Build redirect URL preserving the original ws(s) scheme
+          const scheme = details.url.startsWith("wss:") ? "wss:" : "ws:";
+          parsed.protocol = scheme;
+          parsed.hostname = "127.0.0.1";
+          parsed.port = String(port);
+          callback({ redirectURL: parsed.toString() });
+          return;
+        }
+      }
+      callback({});
+    },
+  );
 
   shellWindow = createShellWindow();
   broadcastWorkspaceUpdate();

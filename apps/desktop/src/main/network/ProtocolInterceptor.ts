@@ -65,10 +65,12 @@ export class ProtocolInterceptor {
         target.hostname = "127.0.0.1";
         target.port = String(workspace.idePort);
         try {
+          const body = await this.extractBody(request);
           const response = await fetch(new Request(target.toString(), {
             method: request.method,
             headers: this.rewriteHeaders(request.headers, workspace.ideHost, `127.0.0.1:${workspace.idePort}`),
-            body: request.body,
+            body,
+            redirect: "manual",
           }));
           this.record({
             method: request.method,
@@ -81,7 +83,7 @@ export class ProtocolInterceptor {
             ok: response.ok,
             severity: this.severityFor(response.status, response.ok),
           });
-          return response;
+          return this.rewriteRedirectLocation(response, workspace.idePort, workspace.ideHost);
         } catch (error) {
           this.record({
             method: request.method,
@@ -122,10 +124,12 @@ export class ProtocolInterceptor {
       target.port = String(workspace.appPort);
 
       try {
+        const body = await this.extractBody(request);
         const response = await fetch(new Request(target.toString(), {
           method: request.method,
           headers: this.rewriteHeaders(request.headers, workspace.appHost, `127.0.0.1:${workspace.appPort}`),
-          body: request.body,
+          body,
+          redirect: "manual",
         }));
         this.record({
           method: request.method,
@@ -138,7 +142,9 @@ export class ProtocolInterceptor {
           ok: response.ok,
           severity: this.severityFor(response.status, response.ok),
         });
-        return this.stripFrameBlockingHeaders(response);
+        return this.stripFrameBlockingHeaders(
+          this.rewriteRedirectLocation(response, workspace.appPort!, workspace.appHost),
+        );
       } catch (error) {
         this.record({
           method: request.method,
@@ -189,6 +195,49 @@ export class ProtocolInterceptor {
     headers.delete("content-security-policy");
     headers.delete("content-security-policy-report-only");
     headers.set("access-control-allow-origin", "*");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  /**
+   * Buffer the request body so it can be safely forwarded.
+   * Passing the raw ReadableStream into a new Request can silently fail
+   * for POST/PUT/PATCH (body never arrives at upstream).
+   */
+  private async extractBody(request: Request): Promise<ArrayBuffer | null> {
+    const method = request.method.toUpperCase();
+    if (method === "GET" || method === "HEAD" || !request.body) {
+      return null;
+    }
+    return request.arrayBuffer();
+  }
+
+  /**
+   * For manually-handled redirects (3xx), rewrite the Location header from
+   * the upstream 127.0.0.1 address back to the virtual hostname so the
+   * browser re-enters the protocol handler on the next hop.
+   */
+  private rewriteRedirectLocation(response: Response, upstreamPort: number, virtualHost: string): Response {
+    if (response.status < 300 || response.status >= 400) {
+      return response;
+    }
+    const location = response.headers.get("location");
+    if (!location) {
+      return response;
+    }
+    const rewritten = location
+      .replace(`http://127.0.0.1:${upstreamPort}`, `http://${virtualHost}`)
+      .replace(`https://127.0.0.1:${upstreamPort}`, `https://${virtualHost}`)
+      .replace(`http://localhost:${upstreamPort}`, `http://${virtualHost}`)
+      .replace(`https://localhost:${upstreamPort}`, `https://${virtualHost}`);
+    if (rewritten === location) {
+      return response;
+    }
+    const headers = new Headers(response.headers);
+    headers.set("location", rewritten);
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,

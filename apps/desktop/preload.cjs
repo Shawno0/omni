@@ -23,6 +23,7 @@ const omniAPI = {
   listActivityDiagnostics: (workspaceId, limit) => ipcRenderer.invoke("diagnostics:activity:list", workspaceId, limit),
   setKey: (provider, value) => ipcRenderer.invoke("keys:set", provider, value),
   deleteKey: (provider) => ipcRenderer.invoke("keys:delete", provider),
+  toggleDevTools: () => ipcRenderer.invoke("devtools:toggle"),
   onWorkspacesUpdated: (listener) => {
     const eventName = "workspaces:updated";
     const wrapped = (_event, payload) => listener(payload);
