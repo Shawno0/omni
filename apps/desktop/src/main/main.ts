@@ -154,13 +154,13 @@ function stripEmbeddingHeaders(sess: Electron.Session): void {
 function createShellWindow(): BrowserWindow {
   const moduleDir = path.dirname(fileURLToPath(import.meta.url));
   const appRoot = app.getAppPath();
+  // Preload MUST be CommonJS (.cjs) because Electron's preload sandbox
+  // does not support ESM, and this project uses "type": "module".
+  // The canonical source is preload.cjs at the project root.
   const preloadCandidates = [
     path.join(appRoot, "preload.cjs"),
-    path.join(appRoot, "dist", "preload", "preload.js"),
     path.join(moduleDir, "..", "..", "preload.cjs"),
-    path.join(moduleDir, "..", "preload", "preload.js"),
     path.join(process.cwd(), "apps", "desktop", "preload.cjs"),
-    path.join(process.cwd(), "apps", "desktop", "dist", "preload", "preload.js"),
   ];
   const rendererCandidates = [
     path.join(appRoot, "src", "renderer", "index.html"),
