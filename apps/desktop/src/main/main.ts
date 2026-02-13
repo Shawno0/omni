@@ -9,7 +9,7 @@ import { PTYActivityBridge } from "./monitoring/PTYActivityBridge.js";
 import { PTYHeartbeatServer } from "./monitoring/PTYHeartbeatServer.js";
 import { KeyVault } from "./security/KeyVault.js";
 import { SessionStore } from "./state/SessionStore.js";
-import type { WorkspaceCreateInput } from "./types.js";
+import type { WorkspaceCreateInput, WorkspaceInfo } from "./types.js";
 
 
 const ptyActivityBridge = new PTYActivityBridge({
@@ -192,7 +192,7 @@ function createShellWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
-    backgroundColor: "#0f1115",
+    backgroundColor: "#1f1f1f",
     title: "OmniContext",
     webPreferences: {
       preload: preloadPath,
@@ -313,7 +313,28 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("workspace:focus", async (_event, workspaceId: string) => {
+    // Immediately demote previously focused workspace so tiers are consistent
+    if (focusedWorkspaceId && focusedWorkspaceId !== workspaceId) {
+      try {
+        const prev = workspaceManager.get(focusedWorkspaceId);
+        if (prev) {
+          const tier =
+            prev.terminalActive || prev.agentLock || (prev.pid && prev.status === "running")
+              ? "background-active"
+              : "idle";
+          workspaceManager.setResourceTier(focusedWorkspaceId, tier as WorkspaceInfo["resourceTier"]);
+        }
+      } catch {
+        // Workspace may have been disposed.
+      }
+    }
     focusedWorkspaceId = workspaceId;
+    // Immediately promote the newly focused workspace
+    try {
+      workspaceManager.setResourceTier(workspaceId, "focused");
+    } catch {
+      // Workspace may not exist.
+    }
     broadcastWorkspaceUpdate();
     await persistWorkspaceState();
     return workspaceManager.get(workspaceId);
@@ -325,7 +346,23 @@ function registerIpc(): void {
       throw new Error("Workspace not found");
     }
 
+    // Immediately demote previously focused workspace
+    if (focusedWorkspaceId && focusedWorkspaceId !== workspaceId) {
+      try {
+        const prev = workspaceManager.get(focusedWorkspaceId);
+        if (prev) {
+          const tier =
+            prev.terminalActive || prev.agentLock || (prev.pid && prev.status === "running")
+              ? "background-active"
+              : "idle";
+          workspaceManager.setResourceTier(focusedWorkspaceId, tier as WorkspaceInfo["resourceTier"]);
+        }
+      } catch {
+        // Workspace may have been disposed.
+      }
+    }
     focusedWorkspaceId = workspace.id;
+    workspaceManager.setResourceTier(workspaceId, "focused");
     broadcastWorkspaceUpdate();
     safeSend("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
     void persistWorkspaceState();

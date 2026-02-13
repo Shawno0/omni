@@ -74,35 +74,61 @@ window.__omniRendererInitialized = false;
   let focusedTerm = null;
   let focusedFit = null;
 
-  const xtermTheme = {
-    background: "#0f1115",
-    foreground: "#d4d7de",
-    cursor: "#d4d7de",
-    cursorAccent: "#0f1115",
-    selectionBackground: "rgba(99,130,191,0.3)",
-    black: "#0f1115",
-    red: "#f87171",
-    green: "#4ade80",
-    yellow: "#facc15",
-    blue: "#60a5fa",
-    magenta: "#c084fc",
-    cyan: "#22d3ee",
-    white: "#d4d7de",
-    brightBlack: "#555a66",
-    brightRed: "#fca5a5",
-    brightGreen: "#86efac",
-    brightYellow: "#fde68a",
-    brightBlue: "#93c5fd",
-    brightMagenta: "#d8b4fe",
-    brightCyan: "#67e8f9",
-    brightWhite: "#f0f1f4",
+  /* VS Code Default Dark Modern terminal palette */
+  const xtermDarkTheme = {
+    background: "#181818",
+    foreground: "#cccccc",
+    cursor: "#aeafad",
+    cursorAccent: "#000000",
+    selectionBackground: "rgba(38, 79, 120, 0.5)",
+    black: "#000000",
+    red: "#cd3131",
+    green: "#0dbc79",
+    yellow: "#e5e510",
+    blue: "#2472c8",
+    magenta: "#bc3fbc",
+    cyan: "#11a8cd",
+    white: "#e5e5e5",
+    brightBlack: "#666666",
+    brightRed: "#f14c4c",
+    brightGreen: "#23d18b",
+    brightYellow: "#f5f543",
+    brightBlue: "#3b8eea",
+    brightMagenta: "#d670d6",
+    brightCyan: "#29b8db",
+    brightWhite: "#e5e5e5",
+  };
+
+  /* VS Code Default Light Modern terminal palette */
+  const xtermLightTheme = {
+    background: "#ffffff",
+    foreground: "#3b3b3b",
+    cursor: "#000000",
+    cursorAccent: "#ffffff",
+    selectionBackground: "rgba(0, 120, 215, 0.25)",
+    black: "#000000",
+    red: "#cd3131",
+    green: "#00bc7c",
+    yellow: "#949800",
+    blue: "#0451a5",
+    magenta: "#bc05bc",
+    cyan: "#0598bc",
+    white: "#555555",
+    brightBlack: "#666666",
+    brightRed: "#cd3131",
+    brightGreen: "#14ce14",
+    brightYellow: "#b5ba00",
+    brightBlue: "#0451a5",
+    brightMagenta: "#bc05bc",
+    brightCyan: "#0598bc",
+    brightWhite: "#a5a5a5",
   };
 
   const createXtermInstance = (container) => {
     if (!Terminal || !FitAddon || !container) return null;
     const fitAddon = new FitAddon.FitAddon();
     const term = new Terminal({
-      theme: xtermTheme,
+      theme: xtermDarkTheme,
       fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
       fontSize: 13,
       lineHeight: 1.4,
@@ -232,6 +258,13 @@ window.__omniRendererInitialized = false;
   const getIdeThemeName = () =>
     getResolvedTheme() === "dark" ? "Default Dark Modern" : "Default Light Modern";
 
+  /** Sync xterm terminal theme with the resolved app theme. */
+  const updateTerminalTheme = () => {
+    const theme = getResolvedTheme() === "dark" ? xtermDarkTheme : xtermLightTheme;
+    if (bottomTerm) bottomTerm.options.theme = theme;
+    if (focusedTerm) focusedTerm.options.theme = theme;
+  };
+
   /* ─── Sidebar State ───────────────────────────────────────────────── */
   const updateSidebarState = () => {
     if (!elements.appShell) return;
@@ -248,18 +281,18 @@ window.__omniRendererInitialized = false;
       });
       const box = document.createElement("div");
       Object.assign(box.style, {
-        background: "var(--bg-surface, #1a1d24)", borderRadius: "8px", padding: "20px",
-        minWidth: "320px", maxWidth: "420px", color: "var(--text-primary, #d4d7de)",
+        background: "var(--bg-surface, #181818)", borderRadius: "8px", padding: "20px",
+        minWidth: "320px", maxWidth: "420px", color: "var(--text-primary, #cccccc)",
         fontFamily: "system-ui, sans-serif", fontSize: "13px",
-        border: "1px solid var(--border, #2a2e38)",
+        border: "1px solid var(--border-default, #3c3c3c)",
       });
       const label = document.createElement("div");
       label.textContent = message;
       label.style.marginBottom = "12px";
       const input = document.createElement("input");
       Object.assign(input.style, {
-        width: "100%", padding: "6px 10px", borderRadius: "4px", border: "1px solid var(--border, #2a2e38)",
-        background: "var(--bg-primary, #0f1115)", color: "var(--text-primary, #d4d7de)",
+        width: "100%", padding: "6px 10px", borderRadius: "4px", border: "1px solid var(--border-default, #3c3c3c)",
+        background: "var(--bg-elevated, #313131)", color: "var(--text-primary, #cccccc)",
         fontSize: "13px", boxSizing: "border-box",
       });
       input.type = "text";
@@ -269,14 +302,14 @@ window.__omniRendererInitialized = false;
       const cancelBtn = document.createElement("button");
       cancelBtn.textContent = "Cancel";
       Object.assign(cancelBtn.style, {
-        padding: "5px 14px", borderRadius: "4px", border: "1px solid var(--border, #2a2e38)",
-        background: "transparent", color: "var(--text-secondary, #8b95a8)", cursor: "pointer",
+        padding: "5px 14px", borderRadius: "4px", border: "1px solid var(--border-default, #3c3c3c)",
+        background: "transparent", color: "var(--text-secondary, #9d9d9d)", cursor: "pointer",
       });
       const okBtn = document.createElement("button");
       okBtn.textContent = "OK";
       Object.assign(okBtn.style, {
         padding: "5px 14px", borderRadius: "4px", border: "none",
-        background: "var(--accent, #60a5fa)", color: "#fff", cursor: "pointer",
+        background: "var(--accent, #0078d4)", color: "#fff", cursor: "pointer",
       });
       const close = (val) => { overlay.remove(); resolve(val); };
       cancelBtn.addEventListener("click", () => close(null));
@@ -554,14 +587,14 @@ window.__omniRendererInitialized = false;
     switchBrowserTab("preview");
     const loadingHtml = `<!doctype html><html><head><style>
       body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh;
-             font:14px system-ui; color:#8b95a8; background:#12151e; flex-direction:column; gap:12px; }
-      .spinner { width:24px; height:24px; border:3px solid #2a2e38; border-top-color:#60a5fa;
+             font:14px system-ui; color:#9d9d9d; background:#1f1f1f; flex-direction:column; gap:12px; }
+      .spinner { width:24px; height:24px; border:3px solid #3c3c3c; border-top-color:#0078d4;
                  border-radius:50%; animation:spin 0.8s linear infinite; }
       @keyframes spin { to { transform:rotate(360deg); } }
     </style></head><body>
       <div class="spinner"></div>
       <div>Waiting for server on port ${port}\u2026</div>
-      <div style="font-size:12px;color:#555a66;">Will auto-load when ready</div>
+      <div style="font-size:12px;color:#6e7681;">Will auto-load when ready</div>
     </body></html>`;
     frame.src = "data:text/html;charset=utf-8," + encodeURIComponent(loadingHtml);
   };
@@ -897,7 +930,7 @@ window.__omniRendererInitialized = false;
     } else {
       stopAppPreviewRetry();
       if (!ws.usingSrcDoc) {
-        ws.previewFrame.src = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#8b95a8;background:#12151e;'>Set an app port to load the browser preview.</body></html>");
+        ws.previewFrame.src = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#9d9d9d;background:#1f1f1f;'>Set an app port to load the browser preview.</body></html>");
         ws.appSrc = undefined;
         ws.usingSrcDoc = true;
       }
@@ -1072,6 +1105,8 @@ window.__omniRendererInitialized = false;
           elements.diagnostics.textContent = JSON.stringify(workspace, null, 2);
         }
         renderWorkspaceList(); // Re-render for selection styling
+        // Sync focus state with backend so resource tiers update immediately
+        await api.focusWorkspace(workspace.id);
         await loadActivity();
         await renderWorkspaceSurface();
       });
@@ -1465,6 +1500,8 @@ window.__omniRendererInitialized = false;
       elements.themeSelect.addEventListener("change", () => {
         localStorage.setItem("omni-theme", elements.themeSelect.value);
         applyTheme(elements.themeSelect.value);
+        // Sync terminal + IDE themes
+        updateTerminalTheme();
         // Force IDE reload with new theme
         wsFrames.forEach((ws) => { ws.ideSrc = undefined; });
         void renderWorkspaceSurface();
@@ -1473,6 +1510,7 @@ window.__omniRendererInitialized = false;
 
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (currentTheme !== "system") return;
+      updateTerminalTheme();
       wsFrames.forEach((ws) => { ws.ideSrc = undefined; });
       void renderWorkspaceSurface();
     });
@@ -1543,6 +1581,8 @@ window.__omniRendererInitialized = false;
 
     // Initialize xterm.js terminals
     try { initTerminals(); } catch (e) { console.warn("xterm init failed:", e); }
+    // Apply correct terminal theme based on current settings
+    updateTerminalTheme();
     window.addEventListener("resize", () => fitAllTerminals());
     // Observe bottom panel resizes for terminal fit
     const bottomPanel = document.querySelector(".bottom-panel");

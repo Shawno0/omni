@@ -35,42 +35,42 @@
   --duration-normal: 200ms;
 }
 
-/* --- Dark Theme (default) --------------------------------------------- */
+/* --- Dark Theme (default) — matches VS Code "Default Dark Modern" ------ */
 :root,
 :root[data-theme="dark"] {
-  --bg-base: #0c0e14;
-  --bg-surface: #12151e;
-  --bg-elevated: #181c28;
-  --bg-overlay: rgba(0, 0, 0, 0.6);
-  --bg-hover: rgba(255, 255, 255, 0.04);
-  --bg-active: rgba(255, 255, 255, 0.07);
-  --bg-selected: rgba(99, 144, 240, 0.10);
+  --bg-base: #1f1f1f;
+  --bg-surface: #181818;
+  --bg-elevated: #313131;
+  --bg-overlay: rgba(0, 0, 0, 0.5);
+  --bg-hover: #2a2d2e;
+  --bg-active: #37373d;
+  --bg-selected: #04395e;
 
-  --border-default: rgba(255, 255, 255, 0.08);
-  --border-subtle: rgba(255, 255, 255, 0.05);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-accent: rgba(99, 144, 240, 0.4);
+  --border-default: #3c3c3c;
+  --border-subtle: #2b2b2b;
+  --border-strong: #454545;
+  --border-accent: #0078d4;
 
-  --text-primary: #e8ecf4;
-  --text-secondary: #8b95a8;
-  --text-tertiary: #5a6478;
-  --text-inverse: #0c0e14;
+  --text-primary: #cccccc;
+  --text-secondary: #9d9d9d;
+  --text-tertiary: #6e7681;
+  --text-inverse: #ffffff;
 
-  --accent: #6390f0;
-  --accent-hover: #7ba3f7;
-  --accent-muted: rgba(99, 144, 240, 0.15);
-  --green: #34d399;
-  --green-muted: rgba(52, 211, 153, 0.15);
-  --yellow: #fbbf24;
-  --yellow-muted: rgba(251, 191, 36, 0.15);
-  --red: #f87171;
-  --red-muted: rgba(248, 113, 113, 0.15);
-  --orange: #fb923c;
+  --accent: #0078d4;
+  --accent-hover: #026ec1;
+  --accent-muted: rgba(0, 120, 212, 0.15);
+  --green: #3fb950;
+  --green-muted: rgba(63, 185, 80, 0.15);
+  --yellow: #cca700;
+  --yellow-muted: rgba(204, 167, 0, 0.15);
+  --red: #f14c4c;
+  --red-muted: rgba(241, 76, 76, 0.15);
+  --orange: #db6d28;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
-  --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.6);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.48);
+  --shadow-xl: 0 24px 48px rgba(0, 0, 0, 0.64);
 }
 
 /* --- Light Theme ------------------------------------------------------ */
@@ -333,7 +333,7 @@ button {
   width: 22px;
   height: 22px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  background: linear-gradient(135deg, var(--accent), #3794ff);
   display: flex;
   align-items: center;
   justify-content: center;
