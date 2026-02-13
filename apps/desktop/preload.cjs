@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const omniAPI = {
+  browseFolder: () => ipcRenderer.invoke("dialog:openFolder"),
   listWorkspaces: () => ipcRenderer.invoke("workspace:list"),
   listWorkspaceLogs: (workspaceId, limit) => ipcRenderer.invoke("workspace:logs:list", workspaceId, limit),
   createWorkspace: (input) => ipcRenderer.invoke("workspace:create", input),

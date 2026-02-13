@@ -370,6 +370,22 @@ button {
   flex-shrink: 0;
 }
 
+.toolbar .path-row {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+}
+
+.toolbar .path-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar .path-row .btn-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
 .toolbar .create-row {
   display: flex;
   gap: var(--sp-2);

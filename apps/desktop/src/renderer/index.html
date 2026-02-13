@@ -33,7 +33,10 @@
 
         <!-- New Workspace Form -->
         <div class="toolbar">
-          <input id="project-path" placeholder="Project path  (e.g. C:\src\my-app)" />
+          <div class="path-row">
+            <input id="project-path" placeholder="Project path  (e.g. C:\src\my-app)" />
+            <button id="browse-path" class="btn-icon" aria-label="Browse for folder" title="Browse…">📂</button>
+          </div>
           <div class="create-row">
             <input id="workspace-name" placeholder="Session name (optional)" />
             <button id="create-workspace" class="btn-primary">+ New</button>

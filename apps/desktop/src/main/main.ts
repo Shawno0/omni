@@ -1,7 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import { WorkspaceManager } from "./workspaces/WorkspaceManager.js";
 import { ProtocolInterceptor } from "./network/ProtocolInterceptor.js";
 import { ActivityMonitor } from "./monitoring/ActivityMonitor.js";
@@ -256,6 +256,16 @@ function broadcastWorkspaceUpdate(): void {
 }
 
 function registerIpc(): void {
+  ipcMain.handle("dialog:openFolder", async () => {
+    if (!shellWindow || shellWindow.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(shellWindow, {
+      properties: ["openDirectory"],
+      title: "Select Project Directory",
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle("workspace:list", () => workspaceManager.list());
   ipcMain.handle("workspace:logs:list", (_event, workspaceId: string, limit?: number) =>
     workspaceManager.listLogs(workspaceId, limit),

@@ -24,6 +24,7 @@ window.__omniRendererInitialized = false;
     workspaceList: el("workspace-list"),
     projectPath: el("project-path"),
     workspaceName: el("workspace-name"),
+    browsePath: el("browse-path"),
     createWorkspace: el("create-workspace"),
     sessionTabs: el("session-tabs"),
     themeSelect: el("theme-select"),
@@ -234,6 +235,7 @@ window.__omniRendererInitialized = false;
   const getSelectedWorkspace = () => workspaces.find((w) => w.id === selectedWorkspaceId);
 
   const buildSessionIdentityKey = (items) => items.map((w) => `${w.id}:${w.name}`).join("|");
+  const buildSessionSnapshotKey = (items) => items.map((w) => `${w.id}:${w.name}:${w.status}:${w.resourceTier}:${w.appPort || 0}`).join("|");
 
   const setStatus = (text, isError = false) => {
     if (!elements.workspaceStatus) return;
@@ -1187,9 +1189,16 @@ window.__omniRendererInitialized = false;
         workspaces = pendingWorkspacesPayload;
         pendingWorkspacesPayload = null;
 
-        const changed = buildSessionIdentityKey(prev) !== buildSessionIdentityKey(workspaces);
-        if (changed) {
+        const identityChanged = buildSessionIdentityKey(prev) !== buildSessionIdentityKey(workspaces);
+        const dataChanged = buildSessionSnapshotKey(prev) !== buildSessionSnapshotKey(workspaces);
+
+        // Always re-render the workspace list when any visible data changes
+        // (tier badges, status dots, port labels, etc.)
+        if (dataChanged || identityChanged) {
           renderWorkspaceList();
+        }
+        // Only re-render session tabs when workspaces are added/removed/renamed
+        if (identityChanged) {
           renderSessionTabs();
         }
 
@@ -1543,6 +1552,22 @@ window.__omniRendererInitialized = false;
       sidebarCollapsed = !sidebarCollapsed;
       localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
       updateSidebarState();
+    });
+
+    // Browse for project folder
+    elements.browsePath?.addEventListener("click", async () => {
+      if (!api?.browseFolder) return;
+      const folderPath = await api.browseFolder();
+      if (!folderPath) return;
+      if (elements.projectPath) elements.projectPath.value = folderPath;
+      // Auto-populate session name from the folder name if the name field is empty
+      if (elements.workspaceName && !elements.workspaceName.value.trim()) {
+        const parts = folderPath.replace(/[\\/]+$/, "").split(/[\\/]/);
+        const folderName = parts[parts.length - 1] || "";
+        elements.workspaceName.value = folderName;
+      }
+      elements.workspaceName?.focus();
+      elements.workspaceName?.select();
     });
 
     // Create workspace
