@@ -69,6 +69,8 @@ Desktop-only (workspace selector):
 - `npm run build -w @omni/desktop`
 - `npm run dev -w @omni/desktop`
 - `npm run package:win -w @omni/desktop`
+- `npm run package:linux -w @omni/desktop`
+- `npm run package:mac -w @omni/desktop`
 
 ## Build and Packaging
 
@@ -84,7 +86,21 @@ npm run build -w @omni/desktop
 npm run package:win -w @omni/desktop
 ```
 
+### Linux installer/package
+
+```bash
+npm run package:linux -w @omni/desktop
+```
+
+### macOS installer/package
+
+```bash
+npm run package:mac -w @omni/desktop
+```
+
 Installer output is written to `apps/desktop/out`.
+
+Note: build each target on its native OS when possible (Windows on Windows, Linux on Linux, macOS on macOS).
 
 ## Environment Variables
 

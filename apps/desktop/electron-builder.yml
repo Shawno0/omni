@@ -16,6 +16,7 @@ directories:
   output: out
 win:
   signAndEditExecutable: false
+  icon: build/logo-256.png
   target:
     - nsis
   artifactName: Omni-${version}-setup.${ext}

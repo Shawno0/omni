@@ -17,7 +17,9 @@
         <!-- Header -->
         <div class="sidebar-head">
           <div class="sidebar-title-block">
-            <div class="sidebar-logo" aria-hidden="true">O</div>
+            <div class="sidebar-logo" aria-hidden="true">
+              <img src="./logo.svg" alt="" />
+            </div>
             <h1>Omni</h1>
             <p>Agentic Workspace Supervisor</p>
           </div>
@@ -74,34 +76,6 @@
             </div>
           </section>
 
-          <!-- BYOK Keys -->
-          <section class="panel-card collapsed" data-card-id="byok-keys">
-            <button class="panel-card-header" data-card-toggle="byok-keys" aria-expanded="false">
-              <h2>API Keys</h2>
-              <span class="panel-card-chevron">▾</span>
-            </button>
-            <div class="panel-card-body" data-card-body="byok-keys">
-              <div class="key-grid">
-                <div class="key-row">
-                  <label>
-                    OpenAI
-                    <input id="openai-key" type="password" placeholder="sk-..." />
-                  </label>
-                  <button id="save-openai" class="btn-secondary">Save</button>
-                  <button id="delete-openai" class="ghost danger">Del</button>
-                </div>
-                <div class="key-row">
-                  <label>
-                    Anthropic
-                    <input id="anthropic-key" type="password" placeholder="sk-ant-..." />
-                  </label>
-                  <button id="save-anthropic" class="btn-secondary">Save</button>
-                  <button id="delete-anthropic" class="ghost danger">Del</button>
-                </div>
-              </div>
-              <ul id="key-list" class="key-list"></ul>
-            </div>
-          </section>
         </div>
       </aside>
 
@@ -274,6 +248,17 @@
 
     <script src="../../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="./modules/themeController.js"></script>
+    <script src="./modules/workspaceModalController.js"></script>
+    <script src="./modules/previewManager.js"></script>
+    <script src="./modules/quickActionsController.js"></script>
+    <script src="./modules/browserTabsController.js"></script>
+    <script src="./modules/terminalTabsController.js"></script>
+    <script src="./modules/workspaceListController.js"></script>
+    <script src="./modules/uiChromeController.js"></script>
+    <script src="./modules/diagnosticsController.js"></script>
+    <script src="./modules/terminalViewController.js"></script>
+    <script src="./modules/initController.js"></script>
     <script src="./renderer.js" defer></script>
     <script>
       (() => {

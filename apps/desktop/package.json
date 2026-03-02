@@ -16,6 +16,8 @@
     "postinstall": "electron-rebuild -w node-pty",
     "start": "npm run prepare:runtime && electron .",
     "package:win": "npm run prepare:runtime && npm run build && electron-builder --config electron-builder.yml --win",
+    "package:linux": "npm run prepare:runtime && npm run build && electron-builder --config electron-builder.yml --linux",
+    "package:mac": "npm run prepare:runtime && npm run build && electron-builder --config electron-builder.yml --mac",
     "protocol:register": "pwsh -ExecutionPolicy Bypass -File ./scripts/registerProtocol.ps1",
     "protocol:validate": "pwsh -ExecutionPolicy Bypass -File ./scripts/validateProtocol.ps1"
   },

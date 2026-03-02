@@ -192,10 +192,19 @@ function createShellWindow(): BrowserWindow {
     path.join(moduleDir, "..", "..", "src", "renderer", "renderer.js"),
     path.join(process.cwd(), "apps", "desktop", "src", "renderer", "renderer.js"),
   ];
+  const iconCandidates = [
+    path.join(appRoot, "logo.ico"),
+    path.join(moduleDir, "..", "..", "..", "logo.ico"),
+    path.join(process.cwd(), "logo.ico"),
+    path.join(appRoot, "src", "renderer", "logo.svg"),
+    path.join(moduleDir, "..", "..", "src", "renderer", "logo.svg"),
+    path.join(process.cwd(), "apps", "desktop", "src", "renderer", "logo.svg"),
+  ];
 
   const preloadPath = preloadCandidates.find((candidate) => fs.existsSync(candidate));
   const rendererPath = rendererCandidates.find((candidate) => fs.existsSync(candidate));
   const rendererScriptPath = rendererScriptCandidates.find((candidate) => fs.existsSync(candidate));
+  const iconPath = iconCandidates.find((candidate) => fs.existsSync(candidate));
 
   if (!preloadPath) {
     throw new Error("Unable to locate preload script for shell window");
@@ -214,6 +223,7 @@ function createShellWindow(): BrowserWindow {
     height: 860,
     backgroundColor: "#1f1f1f",
     title: "Omni",
+    ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

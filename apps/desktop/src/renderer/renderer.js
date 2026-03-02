@@ -8,6 +8,7 @@ window.__omniRendererInitialized = false;
 (() => {
   const el = (id) => document.getElementById(id);
   const api = window.omniAPI;
+  const modules = window.OmniRendererModules || {};
 
   /* ─── Element References ──────────────────────────────────────────── */
   const elements = {
@@ -48,13 +49,6 @@ window.__omniRendererInitialized = false;
     settingsStatus: el("settings-status"),
     paletteKey: el("setting-palette-key"),
     restartKey: el("setting-restart-key"),
-    saveOpenai: el("save-openai"),
-    deleteOpenai: el("delete-openai"),
-    openaiKey: el("openai-key"),
-    saveAnthropic: el("save-anthropic"),
-    deleteAnthropic: el("delete-anthropic"),
-    anthropicKey: el("anthropic-key"),
-    keyList: el("key-list"),
     layoutOverview: el("layout-overview"),
     layoutFocused: el("layout-focused"),
     focusedSurfaceTabs: el("focused-surface-tabs"),
@@ -74,144 +68,15 @@ window.__omniRendererInitialized = false;
     browserDevtools: el("browser-devtools"),
   };
 
-  /* ─── xterm.js Instances ──────────────────────────────────────────── */
-  const Terminal = window.Terminal;
-  const FitAddon = window.FitAddon;
-  let bottomTerm = null;
-  let bottomFit = null;
-  let focusedTerm = null;
-  let focusedFit = null;
-
-  /* VS Code Default Dark Modern terminal palette */
-  const xtermDarkTheme = {
-    background: "#181818",
-    foreground: "#cccccc",
-    cursor: "#aeafad",
-    cursorAccent: "#000000",
-    selectionBackground: "rgba(38, 79, 120, 0.5)",
-    black: "#000000",
-    red: "#cd3131",
-    green: "#0dbc79",
-    yellow: "#e5e510",
-    blue: "#2472c8",
-    magenta: "#bc3fbc",
-    cyan: "#11a8cd",
-    white: "#e5e5e5",
-    brightBlack: "#666666",
-    brightRed: "#f14c4c",
-    brightGreen: "#23d18b",
-    brightYellow: "#f5f543",
-    brightBlue: "#3b8eea",
-    brightMagenta: "#d670d6",
-    brightCyan: "#29b8db",
-    brightWhite: "#e5e5e5",
-  };
-
-  /* VS Code Default Light Modern terminal palette */
-  const xtermLightTheme = {
-    background: "#ffffff",
-    foreground: "#3b3b3b",
-    cursor: "#000000",
-    cursorAccent: "#ffffff",
-    selectionBackground: "rgba(0, 120, 215, 0.25)",
-    black: "#000000",
-    red: "#cd3131",
-    green: "#00bc7c",
-    yellow: "#949800",
-    blue: "#0451a5",
-    magenta: "#bc05bc",
-    cyan: "#0598bc",
-    white: "#555555",
-    brightBlack: "#666666",
-    brightRed: "#cd3131",
-    brightGreen: "#14ce14",
-    brightYellow: "#b5ba00",
-    brightBlue: "#0451a5",
-    brightMagenta: "#bc05bc",
-    brightCyan: "#0598bc",
-    brightWhite: "#a5a5a5",
-  };
-
-  const createXtermInstance = (container) => {
-    if (!Terminal || !FitAddon || !container) return null;
-    const fitAddon = new FitAddon.FitAddon();
-    const term = new Terminal({
-      theme: xtermDarkTheme,
-      fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
-      fontSize: 13,
-      lineHeight: 1.4,
-      cursorBlink: true,
-      cursorStyle: "bar",
-      allowProposedApi: true,
-      scrollback: 5000,
-    });
-    term.loadAddon(fitAddon);
-    term.open(container);
-    // Small delay before first fit to let layout settle
-    requestAnimationFrame(() => { try { fitAddon.fit(); } catch {} });
-    return { term, fitAddon };
-  };
-
-  const initTerminals = () => {
-    // Diagnostic: log what globals are available
-    const diag = [];
-    diag.push(`Terminal=${typeof Terminal} (${Terminal ? 'ok' : 'MISSING'})`);
-    diag.push(`FitAddon=${typeof FitAddon} (${FitAddon ? 'ok' : 'MISSING'})`);
-    diag.push(`container=${elements.terminalContainer ? 'ok' : 'MISSING'}`);
-    diag.push(`focusedContainer=${elements.focusedTerminalContainer ? 'ok' : 'MISSING'}`);
-
-    const b = createXtermInstance(elements.terminalContainer);
-    if (b) {
-      bottomTerm = b.term;
-      bottomFit = b.fitAddon;
-      bottomTerm.onData((data) => {
-        if (selectedWorkspaceId && activeTerminalId && api?.sendTerminalInput) {
-          api.sendTerminalInput(selectedWorkspaceId, activeTerminalId, data);
-        }
-      });
-      // Write init diagnostics into the terminal so they're visible
-      bottomTerm.write(`\x1b[36m[xterm] ${diag.join(', ')}\x1b[0m\r\n`);
-      bottomTerm.write(`\x1b[36m[xterm] bottomTerm created successfully\x1b[0m\r\n`);
-    } else {
-      // Terminal creation failed — show diagnostics in the container itself
-      if (elements.terminalContainer) {
-        elements.terminalContainer.innerHTML = `<pre style="color:#f87171;padding:8px;font:12px monospace;">[xterm init failed]\n${diag.join('\n')}</pre>`;
-      }
-    }
-    const f = createXtermInstance(elements.focusedTerminalContainer);
-    if (f) {
-      focusedTerm = f.term;
-      focusedFit = f.fitAddon;
-      focusedTerm.onData((data) => {
-        if (selectedWorkspaceId && activeTerminalId && api?.sendTerminalInput) {
-          api.sendTerminalInput(selectedWorkspaceId, activeTerminalId, data);
-        }
-      });
-    }
-
-    // Fix: The terminal tab's parent (.bottom-tab-content) has overflow:auto,
-    // which makes the browser treat Space as "scroll down" — eating the keypress
-    // before xterm can handle it. We remove overflow on the terminal-specific
-    // tab content so it's not scrollable (xterm handles its own scrolling).
-    // Applied via JS *after* xterm creation to avoid layout measurement issues.
-    const termTabContent = elements.terminalContainer?.closest(".bottom-tab-content");
-    if (termTabContent) {
-      termTabContent.style.overflow = "hidden";
-      termTabContent.style.padding = "0";
-      // Re-fit after layout change
-      requestAnimationFrame(() => fitAllTerminals());
-    }
-  };
+  /* ─── Terminal Views ──────────────────────────────────────────────── */
+  let terminalViewController = null;
 
   const fitAllTerminals = () => {
-    try { bottomFit?.fit(); } catch {}
-    try { focusedFit?.fit(); } catch {}
-    // Send resize to backend for whichever terminal is visible
-    const activeTerm = layoutMode === "focused" && focusedSurface === "terminal" ? focusedTerm : bottomTerm;
-    if (activeTerm && selectedWorkspaceId && activeTerminalId && api?.resizeTerminal) {
-      api.resizeTerminal(selectedWorkspaceId, activeTerminalId, activeTerm.cols, activeTerm.rows);
-    }
+    terminalViewController?.fitAllTerminals();
   };
+
+  const getBottomTerm = () => terminalViewController?.getBottomTerm?.() || null;
+  const getFocusedTerm = () => terminalViewController?.getFocusedTerm?.() || null;
 
   /* ─── State ───────────────────────────────────────────────────────── */
   let selectedWorkspaceId;
@@ -221,7 +86,6 @@ window.__omniRendererInitialized = false;
   let restoreEvents = [];
   let sidebarCollapsed = localStorage.getItem("omni-sidebar-collapsed") === "true";
   let terminalWorkspaceId;
-  let currentTheme = localStorage.getItem("omni-theme") || "system";
   let pendingWorkspacesPayload = null;
   let workspacesUpdateTimer;
   let applyingWorkspaceUpdate = false;
@@ -230,8 +94,6 @@ window.__omniRendererInitialized = false;
   const terminalTabsByWorkspace = new Map();
   const terminalBufferByKey = new Map();
   let ideRatio = Number(localStorage.getItem("omni-ide-ratio") || "50");
-  let appPreviewRetryTimer = null;
-  let appPreviewTargetSrc = null;
   let browserTabCounter = 0;
   let activeBrowserTab = "preview";
   let browserTabs = [{ id: "preview", label: "Preview", closable: false }];
@@ -256,108 +118,26 @@ window.__omniRendererInitialized = false;
     elements.workspaceStatus.classList.toggle("error", isError);
   };
 
-  const applyTheme = (theme) => {
-    if (theme === "system") {
-      document.documentElement.removeAttribute("data-theme");
-    } else {
-      document.documentElement.setAttribute("data-theme", theme);
-    }
-    currentTheme = theme;
-  };
+  let themeController = null;
 
-  const themeIconByMode = {
-    light: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>`,
-    dark: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"></path></svg>`,
-    system: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M8 20h8"></path><path d="M12 18v2"></path></svg>`,
-  };
+  let workspaceModalController = null;
+  const openWorkspaceModal = () => workspaceModalController?.open();
 
-  const updateThemeToggleVisual = () => {
-    const mode = currentTheme === "light" || currentTheme === "dark" ? currentTheme : "system";
-    if (elements.themeToggleIcon) {
-      elements.themeToggleIcon.innerHTML = themeIconByMode[mode];
-    }
-    if (elements.themeToggle) {
-      const nextMode = mode === "system" ? "light" : mode === "light" ? "dark" : "system";
-      elements.themeToggle.title = `Theme: ${mode[0].toUpperCase()}${mode.slice(1)} (next: ${nextMode})`;
-      elements.themeToggle.setAttribute("aria-label", `Theme ${mode}`);
-    }
-  };
-
-  const cycleThemeMode = () => {
-    const nextMode = currentTheme === "system" ? "light" : currentTheme === "light" ? "dark" : "system";
-    localStorage.setItem("omni-theme", nextMode);
-    applyTheme(nextMode);
-    persistIdeThemePreference();
-    updateThemeToggleVisual();
-    updateTerminalTheme();
-    reskinPreviewPlaceholders();
-    rebuildIdeFramesForTheme();
-    applyThemeToAllIdeFrames();
-  };
-
-  const openWorkspaceModal = () => {
-    elements.workspaceModalOverlay?.classList.remove("hidden");
-    setTimeout(() => {
-      elements.modalProjectPath?.focus();
-      elements.modalProjectPath?.select();
-    }, 10);
-  };
-
-  const closeWorkspaceModal = () => {
-    elements.workspaceModalOverlay?.classList.add("hidden");
-  };
-
-  const browseWorkspaceFolder = async () => {
-    if (!api?.browseFolder) return;
-    const folderPath = await api.browseFolder();
-    if (!folderPath) return;
-    if (elements.modalProjectPath) elements.modalProjectPath.value = folderPath;
-    if (elements.modalWorkspaceName && !elements.modalWorkspaceName.value.trim()) {
-      const parts = folderPath.replace(/[\\/]+$/, "").split(/[\\/]/);
-      const folderName = parts[parts.length - 1] || "";
-      elements.modalWorkspaceName.value = folderName;
-    }
-    elements.modalWorkspaceName?.focus();
-    elements.modalWorkspaceName?.select();
-  };
-
-  const submitWorkspaceCreate = async () => {
-    try {
-      const projectPath = String(elements.modalProjectPath?.value || "").trim();
-      const name = String(elements.modalWorkspaceName?.value || "").trim();
-
-      if (!projectPath) {
-        setStatus("Project path is required.", true);
-        return;
-      }
-
-      const created = await api.createWorkspace({
-        projectPath,
-        name: name || undefined,
-      });
-
-      selectedWorkspaceId = created.id;
-      await api.openWorkspace(created.id);
-      await api.focusWorkspace(created.id);
-
-      if (elements.modalProjectPath) elements.modalProjectPath.value = "";
-      if (elements.modalWorkspaceName) elements.modalWorkspaceName.value = "";
-      closeWorkspaceModal();
-
-      await refresh({ loadActivity: true });
-    } catch (error) {
-      const msg = error?.message || "Failed to create workspace";
-      setStatus(`Failed: ${msg}`, true);
-    }
-  };
+  const getCurrentTheme = () =>
+    themeController?.getCurrentTheme?.() || localStorage.getItem("omni-theme") || "system";
 
   const getResolvedTheme = () => {
+    if (themeController?.getResolvedTheme) {
+      return themeController.getResolvedTheme();
+    }
+    const currentTheme = getCurrentTheme();
     if (currentTheme === "light" || currentTheme === "dark") return currentTheme;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   };
 
   const getIdeThemeName = () =>
-    getResolvedTheme() === "dark" ? "Default Dark Modern" : "Default Light Modern";
+    themeController?.getIdeThemeName?.() ||
+    (getResolvedTheme() === "dark" ? "Default Dark Modern" : "Default Light Modern");
 
   const persistIdeThemePreference = () => {
     if (!api?.setIdeTheme) {
@@ -468,26 +248,12 @@ window.__omniRendererInitialized = false;
 
   /** Sync xterm terminal theme with the resolved app theme. */
   const updateTerminalTheme = () => {
-    const theme = getResolvedTheme() === "dark" ? xtermDarkTheme : xtermLightTheme;
-    if (bottomTerm) {
-      bottomTerm.options.theme = theme;
-      if (typeof bottomTerm.refresh === "function") {
-        bottomTerm.refresh(0, Math.max(0, bottomTerm.rows - 1));
-      }
-    }
-    if (focusedTerm) {
-      focusedTerm.options.theme = theme;
-      if (typeof focusedTerm.refresh === "function") {
-        focusedTerm.refresh(0, Math.max(0, focusedTerm.rows - 1));
-      }
-    }
+    terminalViewController?.updateTheme(getResolvedTheme());
   };
 
-  /* ─── Sidebar State ───────────────────────────────────────────────── */
-  const updateSidebarState = () => {
-    if (!elements.appShell) return;
-    elements.appShell.classList.toggle("sidebar-collapsed", sidebarCollapsed);
-  };
+  let uiChromeController = null;
+  const updateSidebarState = () => uiChromeController?.updateSidebarState();
+  const toggleSidebar = () => uiChromeController?.toggleSidebar();
 
   /* ─── Custom Prompt (Electron doesn't support window.prompt) ─────── */
   const showPrompt = (message, defaultValue = "") => {
@@ -546,183 +312,12 @@ window.__omniRendererInitialized = false;
     });
   };
 
-  /* ─── Layout Mode ──────────────────────────────────────────────────── */
-  const applyLayoutMode = () => {
-    const shell = document.querySelector(".workspace-shell");
-    if (!shell) return;
-
-    const isOverview = layoutMode === "overview";
-    shell.classList.toggle("layout-focused", !isOverview);
-
-    // Toggle layout button active states
-    elements.layoutOverview?.classList.toggle("active", isOverview);
-    elements.layoutFocused?.classList.toggle("active", !isOverview);
-
-    // Show/hide focused surface tabs
-    elements.focusedSurfaceTabs?.classList.toggle("hidden", isOverview);
-
-    // In overview, show both panes + splitter, hide focused terminal
-    // In focused, show only the active surface pane
-    const idePane = elements.workspaceGrid?.querySelector(".surface-ide");
-    const browserPane = elements.workspaceGrid?.querySelector(".surface-browser");
-    const splitter = elements.surfaceSplitter;
-    const focusedTerm = elements.focusedTerminal;
-
-    if (isOverview) {
-      idePane?.classList.remove("surface-active");
-      browserPane?.classList.remove("surface-active");
-      focusedTerm?.classList.remove("visible");
-      focusedTerm?.classList.add("hidden");
-      // Restore the workspace grid — applyFocusedSurface() hides it when
-      // the terminal is the focused surface, so we must un-hide it here.
-      if (selectedWorkspaceId) {
-        elements.workspaceGrid?.classList.remove("hidden");
-      }
-    } else {
-      applyFocusedSurface();
-    }
-
-    // Re-fit terminals after layout change
-    requestAnimationFrame(() => fitAllTerminals());
-  };
-
-  const applyFocusedSurface = () => {
-    const idePane = elements.workspaceGrid?.querySelector(".surface-ide");
-    const browserPane = elements.workspaceGrid?.querySelector(".surface-browser");
-    const focusedTerm = elements.focusedTerminal;
-
-    // Update tab active states
-    document.querySelectorAll(".focused-surface-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.surface === focusedSurface);
-    });
-
-    const showIde = focusedSurface === "ide";
-    const showPreview = focusedSurface === "preview";
-    const showTerminal = focusedSurface === "terminal";
-
-    idePane?.classList.toggle("surface-active", showIde);
-    browserPane?.classList.toggle("surface-active", showPreview);
-
-    if (focusedTerm) {
-      focusedTerm.classList.toggle("visible", showTerminal);
-      focusedTerm.classList.toggle("hidden", !showTerminal);
-    }
-
-    // Hide/show the workspace grid when terminal is focused
-    if (showTerminal) {
-      elements.workspaceGrid?.classList.add("hidden");
-    } else if (selectedWorkspaceId) {
-      elements.workspaceGrid?.classList.remove("hidden");
-    }
-
-    // Re-fit terminals when switching surfaces
-    requestAnimationFrame(() => fitAllTerminals());
-  };
-
-  const bindLayoutSwitcher = () => {
-    elements.layoutOverview?.addEventListener("click", () => {
-      layoutMode = "overview";
-      localStorage.setItem("omni-layout", "overview");
-      applyLayoutMode();
-    });
-
-    elements.layoutFocused?.addEventListener("click", () => {
-      layoutMode = "focused";
-      localStorage.setItem("omni-layout", "focused");
-      applyLayoutMode();
-    });
-
-    // Focused surface tabs
-    document.querySelectorAll(".focused-surface-tab").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        focusedSurface = tab.dataset.surface || "ide";
-        localStorage.setItem("omni-focused-surface", focusedSurface);
-        applyFocusedSurface();
-      });
-    });
-
-    // Focused terminal input/run — handled by xterm onData, no manual wiring needed
-  };
-
-  /* ─── IDE Ratio / Splitter ────────────────────────────────────────── */
-  const clampIdeRatio = (v) => Math.max(25, Math.min(75, v));
-
-  const applyIdeRatio = (v) => {
-    ideRatio = clampIdeRatio(v);
-    document.documentElement.style.setProperty("--ide-ratio", `${ideRatio}%`);
-    localStorage.setItem("omni-ide-ratio", String(ideRatio));
-  };
-
-  const resizeFromClientX = (clientX) => {
-    if (!elements.workspaceGrid) return;
-    const rect = elements.workspaceGrid.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const percent = ((clientX - rect.left) / rect.width) * 100;
-    applyIdeRatio(percent);
-  };
-
-  const bindSurfaceSplitter = () => {
-    const splitter = elements.surfaceSplitter;
-    const grid = elements.workspaceGrid;
-    if (!splitter || !grid) return;
-
-    splitter.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      grid.classList.add("resizing");
-      splitter.setPointerCapture(e.pointerId);
-      resizeFromClientX(e.clientX);
-    });
-
-    splitter.addEventListener("pointermove", (e) => {
-      if (!splitter.hasPointerCapture(e.pointerId)) return;
-      resizeFromClientX(e.clientX);
-    });
-
-    const releasePointer = (e) => {
-      if (splitter.hasPointerCapture(e.pointerId)) {
-        splitter.releasePointerCapture(e.pointerId);
-      }
-      grid.classList.remove("resizing");
-    };
-
-    splitter.addEventListener("pointerup", releasePointer);
-    splitter.addEventListener("pointercancel", releasePointer);
-
-    splitter.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowLeft") { e.preventDefault(); applyIdeRatio(ideRatio - 2); }
-      if (e.key === "ArrowRight") { e.preventDefault(); applyIdeRatio(ideRatio + 2); }
-    });
-  };
-
-  /* ─── Panel Card Toggle (sidebar sections) ────────────────────────── */
-  const bindPanelCardToggles = () => {
-    document.querySelectorAll("[data-card-toggle]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const card = btn.closest(".panel-card");
-        if (!card) return;
-        const isCollapsed = card.classList.toggle("collapsed");
-        btn.setAttribute("aria-expanded", String(!isCollapsed));
-      });
-    });
-  };
-
-  /* ─── Bottom Panel Tabs ───────────────────────────────────────────── */
-  const bindBottomPanelTabs = () => {
-    const tabs = document.querySelectorAll(".bottom-panel-tab");
-    const contents = document.querySelectorAll(".bottom-tab-content");
-
-    tabs.forEach((tab) => {
-      tab.addEventListener("click", () => {
-        const target = tab.dataset.tab;
-        tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === target));
-        contents.forEach((c) => c.classList.toggle("active", c.dataset.tabContent === target));
-        // Re-fit terminal when its tab becomes visible
-        if (target === "terminal") {
-          requestAnimationFrame(() => { try { bottomFit?.fit(); } catch {} });
-        }
-      });
-    });
-  };
+  const applyLayoutMode = () => uiChromeController?.applyLayoutMode();
+  const applyIdeRatio = (value) => uiChromeController?.applyIdeRatio(value);
+  const bindSurfaceSplitter = () => uiChromeController?.bindSurfaceSplitter();
+  const bindLayoutSwitcher = () => uiChromeController?.bindLayoutSwitcher();
+  const bindPanelCardToggles = () => uiChromeController?.bindPanelCardToggles();
+  const bindBottomPanelTabs = () => uiChromeController?.bindBottomPanelTabs();
 
   /* ─── Workspace Empty State ───────────────────────────────────────── */
   const updateEmptyState = (hasWorkspace) => {
@@ -731,110 +326,25 @@ window.__omniRendererInitialized = false;
     }
   };
 
-  /* ─── Protocol Diagnostics ────────────────────────────────────────── */
-  const renderProtocolDiagnostics = () => {
-    if (!elements.protocolDiagnostics) return;
-    if (protocolEvents.length === 0) {
-      elements.protocolDiagnostics.textContent = "No protocol events captured.";
-      return;
-    }
-
-    const wf = elements.protocolWorkspaceFilter?.value || "all";
-    const sf = elements.protocolSeverityFilter?.value || "all";
-    const filtered = protocolEvents.filter((ev) => {
-      const wo = wf === "all" || ev.workspaceId === wf;
-      const so = sf === "all" || ev.severity === sf;
-      return wo && so;
-    });
-
-    if (filtered.length === 0) {
-      elements.protocolDiagnostics.textContent = "No events for selected filters.";
-      return;
-    }
-
-    elements.protocolDiagnostics.textContent = filtered.slice(0, 25).map((ev) => {
-      const t = new Date(ev.at).toLocaleTimeString();
-      return `${t}  ${ev.severity}  ${ev.method} ${ev.path}  ${ev.status}`;
-    }).join("\n");
-  };
-
-  /* ─── Activity Diagnostics ────────────────────────────────────────── */
-  const renderActivityDiagnostics = () => {
-    if (!elements.activityDiagnostics) return;
-    const selected = getSelectedWorkspace();
-    if (!selectedWorkspaceId && !selected) {
-      elements.activityDiagnostics.textContent = "Select a workspace to view activity.";
-      return;
-    }
-    if (activityEvents.length === 0) {
-      elements.activityDiagnostics.textContent = "No activity samples captured.";
-      return;
-    }
-    elements.activityDiagnostics.textContent = activityEvents.slice(0, 30).map((ev) => {
-      const t = new Date(ev.sampledAt).toLocaleTimeString();
-      const cpu = Number(ev.cpuPercent || 0).toFixed(1);
-      return `${t}  tier=${ev.tier}  cpu=${cpu}%  terminal=${ev.terminalActive ? "on" : "off"}  progress=${ev.terminalProgress || "idle"}`;
-    }).join("\n");
-  };
-
-  /* ─── Restore Diagnostics ─────────────────────────────────────────── */
-  const renderRestoreDiagnostics = () => {
-    if (!elements.restoreDiagnostics) return;
-    if (restoreEvents.length === 0) {
-      elements.restoreDiagnostics.textContent = "No restore diagnostics available.";
-      return;
-    }
-    elements.restoreDiagnostics.textContent = restoreEvents.slice(0, 20).map((ev) => {
-      const t = new Date(ev.at).toLocaleTimeString();
-      return `${t}  ${ev.status}  ${ev.workspaceName}  ${ev.message}`;
-    }).join("\n");
-  };
+  let diagnosticsController = null;
+  const renderProtocolDiagnostics = () => diagnosticsController?.renderProtocolDiagnostics();
+  const renderActivityDiagnostics = () => diagnosticsController?.renderActivityDiagnostics();
+  const renderRestoreDiagnostics = () => diagnosticsController?.renderRestoreDiagnostics();
 
   /* ─── App Preview with Retry ──────────────────────────────────────── */
-  const stopAppPreviewRetry = () => {
-    if (appPreviewRetryTimer) {
-      clearInterval(appPreviewRetryTimer);
-      appPreviewRetryTimer = null;
-    }
-    appPreviewTargetSrc = null;
-  };
+  let previewManager = null;
+  let previewFallbackRetryTimer = null;
+  let previewFallbackTargetSrc = null;
 
-  const isExpectedNavigationAbort = (error) => {
-    if (!error) return false;
-    const code = error.code ?? error.errno;
-    if (code === "ERR_ABORTED" || code === -3 || code === "-3") {
-      return true;
-    }
-    return String(error.message || "").includes("ERR_ABORTED");
-  };
-
-  const setWebviewSrcSafe = (frame, nextSrc) => {
+  const setPreviewSrcFallback = (frame, nextSrc) => {
     if (!frame || !nextSrc) return;
     if (frame.src === nextSrc) return;
-
     try {
-      if (typeof frame.loadURL === "function") {
-        const pending = frame.loadURL(nextSrc);
-        if (pending && typeof pending.catch === "function") {
-          pending.catch((error) => {
-            if (!isExpectedNavigationAbort(error)) {
-              console.warn("[preview] webview navigation failed", error);
-            }
-          });
-        }
-        return;
-      }
-    } catch (error) {
-      if (!isExpectedNavigationAbort(error)) {
-        console.warn("[preview] webview navigation threw", error);
-      }
-      return;
-    }
-
-    frame.src = nextSrc;
+      frame.src = nextSrc;
+    } catch {}
   };
 
-  const buildPreviewLoadingHtml = (port) => {
+  const buildPreviewLoadingHtmlFallback = (port) => {
     const isDark = getResolvedTheme() === "dark";
     const background = isDark ? "#1f1f1f" : "#ffffff";
     const textPrimary = isDark ? "#9d9d9d" : "#4b5563";
@@ -854,81 +364,114 @@ window.__omniRendererInitialized = false;
     </body></html>`;
   };
 
-  const buildPreviewNoPortHtml = () => {
+  const buildPreviewNoPortHtmlFallback = () => {
     const isDark = getResolvedTheme() === "dark";
     const background = isDark ? "#1f1f1f" : "#ffffff";
     const text = isDark ? "#9d9d9d" : "#4b5563";
     return `<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:${text};background:${background};'>Set an app port to load the browser preview.</body></html>`;
   };
 
+  const stopPreviewFallbackRetry = () => {
+    if (previewFallbackRetryTimer) {
+      clearInterval(previewFallbackRetryTimer);
+      previewFallbackRetryTimer = null;
+    }
+    previewFallbackTargetSrc = null;
+  };
+
+  const renderPreviewLoadingFallback = (frame, port) => {
+    if (!frame) return;
+    const src = "data:text/html;charset=utf-8," + encodeURIComponent(buildPreviewLoadingHtmlFallback(port));
+    setPreviewSrcFallback(frame, src);
+  };
+
+  const renderPreviewNoPortFallback = (frame) => {
+    if (!frame) return;
+    const src = "data:text/html;charset=utf-8," + encodeURIComponent(buildPreviewNoPortHtmlFallback());
+    setPreviewSrcFallback(frame, src);
+  };
+
+  const stopAppPreviewRetry = () => {
+    if (previewManager?.stopAppPreviewRetry) {
+      previewManager.stopAppPreviewRetry();
+      return;
+    }
+    stopPreviewFallbackRetry();
+  };
   const renderPreviewLoading = (frame, port) => {
-    if (!frame) return;
-    const src = "data:text/html;charset=utf-8," + encodeURIComponent(buildPreviewLoadingHtml(port));
-    setWebviewSrcSafe(frame, src);
+    if (previewManager?.renderPreviewLoading) {
+      previewManager.renderPreviewLoading(frame, port);
+      return;
+    }
+    renderPreviewLoadingFallback(frame, port);
   };
-
   const renderPreviewNoPort = (frame) => {
-    if (!frame) return;
-    const src = "data:text/html;charset=utf-8," + encodeURIComponent(buildPreviewNoPortHtml());
-    setWebviewSrcSafe(frame, src);
+    if (previewManager?.renderPreviewNoPort) {
+      previewManager.renderPreviewNoPort(frame);
+      return;
+    }
+    renderPreviewNoPortFallback(frame);
   };
-
   const reskinPreviewPlaceholders = () => {
+    if (previewManager?.reskinPreviewPlaceholders) {
+      previewManager.reskinPreviewPlaceholders();
+      return;
+    }
     wsFrames.forEach((ws) => {
       if (typeof ws.previewLoadingPort === "number") {
-        renderPreviewLoading(ws.previewFrame, ws.previewLoadingPort);
+        renderPreviewLoadingFallback(ws.previewFrame, ws.previewLoadingPort);
         return;
       }
       if (ws.usingSrcDoc) {
-        renderPreviewNoPort(ws.previewFrame);
+        renderPreviewNoPortFallback(ws.previewFrame);
       }
     });
   };
+  const startAppPreviewWithRetry = (targetSrc, port) => {
+    if (previewManager?.startAppPreviewWithRetry) {
+      previewManager.startAppPreviewWithRetry(targetSrc, port);
+      return;
+    }
 
-  const showPreviewLoading = (port) => {
+    stopPreviewFallbackRetry();
+    previewFallbackTargetSrc = targetSrc;
+
     const frame = getActivePreviewFrame();
     if (!frame) return;
     switchBrowserTab("preview", { persist: false });
+
     const ws = wsFrames.get(selectedWorkspaceId);
     if (ws) {
       ws.previewLoadingPort = port;
       ws.usingSrcDoc = false;
     }
-    renderPreviewLoading(frame, port);
-  };
+    renderPreviewLoadingFallback(frame, port);
 
-  const startAppPreviewWithRetry = (targetSrc, port) => {
-    stopAppPreviewRetry();
-    appPreviewTargetSrc = targetSrc;
-    const capturedWsId = selectedWorkspaceId; // capture for async safety
-    showPreviewLoading(port);
-
+    const capturedWsId = selectedWorkspaceId;
     const tryLoad = async () => {
       try {
         const res = await fetch(targetSrc, { method: "HEAD" });
         if (!res.ok) return false;
-        loadPreview(targetSrc);
+        stopPreviewFallbackRetry();
+        const currentWs = wsFrames.get(capturedWsId);
+        if (currentWs) currentWs.previewLoadingPort = undefined;
+        const targetFrame = currentWs?.previewFrame;
+        if (targetFrame) {
+          setPreviewSrcFallback(targetFrame, targetSrc);
+        }
         return true;
       } catch {
         return false;
       }
     };
 
-    const loadPreview = (src) => {
-      stopAppPreviewRetry();
-      const ws = wsFrames.get(capturedWsId);
-      if (ws) {
-        ws.previewLoadingPort = undefined;
-      }
-      const frame = ws?.previewFrame;
-      if (!frame) return;
-      setWebviewSrcSafe(frame, src);
-    };
-
-    tryLoad().then((ok) => {
-      if (ok || appPreviewTargetSrc !== targetSrc) return;
-      appPreviewRetryTimer = setInterval(async () => {
-        if (appPreviewTargetSrc !== targetSrc) { stopAppPreviewRetry(); return; }
+    void tryLoad().then((ok) => {
+      if (ok || previewFallbackTargetSrc !== targetSrc) return;
+      previewFallbackRetryTimer = setInterval(async () => {
+        if (previewFallbackTargetSrc !== targetSrc) {
+          stopPreviewFallbackRetry();
+          return;
+        }
         await tryLoad();
       }, 2000);
     });
@@ -1017,359 +560,35 @@ window.__omniRendererInitialized = false;
   };
 
   /* ─── Browser Tabs ────────────────────────────────────────────────── */
-  const getTabIframe = (tabId) => {
-    if (!selectedWorkspaceId) return null;
-    return elements.browserTabContent?.querySelector(
-      `webview[data-workspace-id="${selectedWorkspaceId}"][data-tab-id="${tabId}"]`
-    );
-  };
-
-  const getTabButton = (tabId) =>
-    elements.browserTabs?.querySelector(`.browser-tab[data-tab-id="${tabId}"]`);
-
-  const snapshotBrowserTabs = (workspaceId) => {
-    const tabs = browserTabs.map((tab) => {
-      if (tab.id === "preview") {
-        return {
-          id: tab.id,
-          label: tab.label,
-          closable: false,
-        };
-      }
-
-      const frame = elements.browserTabContent?.querySelector(
-        `webview[data-workspace-id="${workspaceId}"][data-tab-id="${tab.id}"]`,
-      );
-      const currentUrl = frame?.getURL?.() || frame?.src || tab.url;
-      return {
-        id: tab.id,
-        label: tab.label,
-        closable: Boolean(tab.closable),
-        ...(currentUrl ? { url: currentUrl } : {}),
-      };
-    });
-
-    return tabs;
-  };
+  let browserTabsController = null;
 
   const persistBrowserTabState = (workspaceId = selectedWorkspaceId) => {
-    if (!workspaceId || !api?.setBrowserState) {
-      return;
-    }
-
-    const tabsSnapshot = snapshotBrowserTabs(workspaceId);
-    void api.setBrowserState(workspaceId, tabsSnapshot, activeBrowserTab || "preview");
+    browserTabsController?.persistBrowserTabState(workspaceId);
   };
-
   const renderBrowserTabBar = () => {
-    if (!elements.browserTabs) return;
-    elements.browserTabs.innerHTML = "";
-    for (const tab of browserTabs) {
-      const btn = document.createElement("button");
-      btn.className = `browser-tab${tab.id === activeBrowserTab ? " active" : ""}`;
-      btn.dataset.tabId = tab.id;
-      btn.title = tab.label;
-
-      const label = document.createElement("span");
-      label.className = "browser-tab-label";
-      label.textContent = tab.label;
-      btn.appendChild(label);
-
-      if (tab.closable) {
-        const close = document.createElement("span");
-        close.className = "browser-tab-close";
-        close.textContent = "\u00d7";
-        close.addEventListener("click", (e) => { e.stopPropagation(); closeBrowserTab(tab.id); });
-        btn.appendChild(close);
-      }
-
-      btn.addEventListener("click", () => switchBrowserTab(tab.id));
-      elements.browserTabs.appendChild(btn);
-    }
+    browserTabsController?.renderBrowserTabBar();
   };
-
   const switchBrowserTab = (tabId, options = { persist: true }) => {
-    activeBrowserTab = tabId;
-    const wsId = selectedWorkspaceId;
-
-    // Show only the active workspace's active tab frame (hides all others)
-    elements.browserTabContent?.querySelectorAll(".browser-frame").forEach((frame) => {
-      const match = frame.dataset.workspaceId === wsId && frame.dataset.tabId === tabId;
-      frame.classList.toggle("active", match);
-    });
-
-    elements.browserTabs?.querySelectorAll(".browser-tab").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.tabId === tabId);
-    });
-
-    const isCustom = tabId !== "preview";
-    elements.browserAddressBar?.classList.toggle("hidden", !isCustom);
-
-    if (isCustom && elements.browserAddressInput) {
-      const iframe = getTabIframe(tabId);
-      const src = iframe?.src || iframe?.getURL?.() || "";
-      elements.browserAddressInput.value = src.startsWith("about:") || src.startsWith("data:") ? "" : src;
-      elements.browserAddressInput.focus();
-    }
-
-    if (options.persist) {
-      persistBrowserTabState();
-    }
+    browserTabsController?.switchBrowserTab(tabId, options);
   };
-
-  const createBrowserTab = (url) => {
-    if (!selectedWorkspaceId) return null;
-    browserTabCounter++;
-    const tabId = `tab-${browserTabCounter}`;
-    let label = "New Tab";
-    if (url) { try { label = new URL(url).hostname || "New Tab"; } catch { label = "New Tab"; } }
-    browserTabs.push({ id: tabId, label, closable: true });
-
-    const workspace = workspaces.find((w) => w.id === selectedWorkspaceId);
-    const partition = workspace?.partition || `persist:session_${selectedWorkspaceId}`;
-
-    const wv = document.createElement("webview");
-    wv.className = "surface-frame browser-frame";
-    wv.dataset.tabId = tabId;
-    wv.dataset.workspaceId = selectedWorkspaceId;
-    wv.setAttribute("partition", partition);
-    wv.setAttribute("allowpopups", "");
-    wv.title = label;
-    if (url) wv.src = url;
-    elements.browserTabContent?.appendChild(wv);
-
-    renderBrowserTabBar();
-    switchBrowserTab(tabId);
-    persistBrowserTabState();
-    return tabId;
-  };
-
-  const closeBrowserTab = (tabId) => {
-    if (tabId === "preview") return;
-
-    const wv = getTabIframe(tabId);
-    wv?.remove();
-
-    browserTabs = browserTabs.filter((t) => t.id !== tabId);
-
-    if (activeBrowserTab === tabId) {
-      const fallback = browserTabs[browserTabs.length - 1]?.id || "preview";
-      switchBrowserTab(fallback);
-    }
-
-    renderBrowserTabBar();
-    persistBrowserTabState();
-  };
-
-  const navigateBrowserTab = (tabId, rawUrl) => {
-    if (tabId === "preview") return;
-    const wv = getTabIframe(tabId);
-    if (!wv) return;
-    let url = rawUrl.trim();
-    if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
-    if (!url) return;
-    wv.src = url;
-
-    const tab = browserTabs.find((t) => t.id === tabId);
-    if (tab) {
-      try { tab.label = new URL(url).hostname || url; } catch { tab.label = url; }
-    }
-    renderBrowserTabBar();
-    persistBrowserTabState();
+  const bindBrowserTabs = () => {
+    browserTabsController?.bind();
   };
 
   /* ─── Terminal Tabs ──────────────────────────────────────────────── */
+  let terminalTabsController = null;
+
   const applyTerminalBufferToViews = () => {
-    bottomTerm?.reset();
-    focusedTerm?.reset();
-    if (!selectedWorkspaceId || !activeTerminalId) {
-      return;
-    }
-
-    const key = terminalBufferKey(selectedWorkspaceId, activeTerminalId);
-    const buffered = terminalBufferByKey.get(key);
-    if (buffered) {
-      bottomTerm?.write(buffered);
-      focusedTerm?.write(buffered);
-    }
+    terminalTabsController?.applyTerminalBufferToViews();
   };
-
-  const rememberTerminalSnapshot = (workspaceId, payload) => {
-    const tabs = Array.isArray(payload?.terminals) ? payload.terminals : [];
-    const nextActive = payload?.activeTerminalId;
-    terminalTabsByWorkspace.set(workspaceId, {
-      terminals: tabs,
-      activeTerminalId: nextActive,
-    });
-
-    if (workspaceId === selectedWorkspaceId) {
-      terminalTabs = tabs;
-      activeTerminalId = nextActive;
-    }
-  };
-
   const renderTerminalTabBar = () => {
-    if (!elements.terminalTabs) return;
-    elements.terminalTabs.innerHTML = "";
-
-    for (const tab of terminalTabs) {
-      const btn = document.createElement("button");
-      btn.className = `terminal-tab${tab.id === activeTerminalId ? " active" : ""}`;
-      btn.dataset.terminalId = tab.id;
-      btn.title = tab.name;
-
-      const label = document.createElement("span");
-      label.className = "terminal-tab-label";
-      label.textContent = tab.name;
-      btn.appendChild(label);
-
-      const close = document.createElement("span");
-      close.className = "terminal-tab-close";
-      close.textContent = "\u00d7";
-      close.addEventListener("click", (e) => {
-        e.stopPropagation();
-        void closeTerminalTab(tab.id);
-      });
-      btn.appendChild(close);
-
-      btn.addEventListener("click", () => {
-        if (tab.id !== activeTerminalId) {
-          void switchTerminalTab(tab.id);
-        }
-      });
-      btn.addEventListener("dblclick", () => {
-        if (tab.id === activeTerminalId) {
-          void renameActiveTerminalTab();
-        }
-      });
-
-      elements.terminalTabs.appendChild(btn);
-    }
-
-    if (elements.terminalTabRename) {
-      elements.terminalTabRename.disabled = !activeTerminalId;
-    }
+    terminalTabsController?.renderTerminalTabBar();
   };
-
   const ensureTerminalTabsForWorkspace = async (workspaceId) => {
-    if (!api?.listTerminals) return;
-
-    let snapshot = await api.listTerminals(workspaceId);
-    if (!snapshot || !Array.isArray(snapshot.terminals) || snapshot.terminals.length === 0) {
-      snapshot = await api.createTerminal(workspaceId);
-    }
-
-    rememberTerminalSnapshot(workspaceId, snapshot);
-    if (workspaceId === selectedWorkspaceId) {
-      renderTerminalTabBar();
-      applyTerminalBufferToViews();
-    }
-
-    if (snapshot?.activeTerminalId && api?.startTerminal) {
-      await api.startTerminal(workspaceId, snapshot.activeTerminalId);
-    }
+    await terminalTabsController?.ensureTerminalTabsForWorkspace(workspaceId);
   };
-
-  const switchTerminalTab = async (terminalId) => {
-    if (!selectedWorkspaceId || !terminalId || !api?.setActiveTerminal) return;
-    const snapshot = await api.setActiveTerminal(selectedWorkspaceId, terminalId);
-    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
-    renderTerminalTabBar();
-    applyTerminalBufferToViews();
-    requestAnimationFrame(() => fitAllTerminals());
-  };
-
-  const createTerminalTab = async () => {
-    if (!selectedWorkspaceId || !api?.createTerminal) return;
-    const snapshot = await api.createTerminal(selectedWorkspaceId);
-    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
-    renderTerminalTabBar();
-    applyTerminalBufferToViews();
-    requestAnimationFrame(() => fitAllTerminals());
-  };
-
-  const renameActiveTerminalTab = async () => {
-    if (!selectedWorkspaceId || !activeTerminalId || !api?.renameTerminal) return;
-    const active = terminalTabs.find((tab) => tab.id === activeTerminalId);
-    const nextName = await showPrompt("Rename terminal:", active?.name || "");
-    if (nextName === null) {
-      return;
-    }
-
-    const normalized = String(nextName).trim();
-    if (!normalized) {
-      return;
-    }
-
-    const snapshot = await api.renameTerminal(selectedWorkspaceId, activeTerminalId, normalized);
-    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
-    renderTerminalTabBar();
-  };
-
-  const closeTerminalTab = async (terminalId) => {
-    if (!selectedWorkspaceId || !terminalId || !api?.closeTerminal) return;
-    const snapshot = await api.closeTerminal(selectedWorkspaceId, terminalId);
-    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
-    renderTerminalTabBar();
-    applyTerminalBufferToViews();
-    if (activeTerminalId) {
-      await api.startTerminal(selectedWorkspaceId, activeTerminalId);
-    }
-    requestAnimationFrame(() => fitAllTerminals());
-  };
-
   const bindTerminalTabs = () => {
-    elements.terminalTabNew?.addEventListener("click", () => {
-      void createTerminalTab();
-    });
-    elements.terminalTabRename?.addEventListener("click", () => {
-      void renameActiveTerminalTab();
-    });
-  };
-
-  const bindBrowserTabs = () => {
-    elements.browserTabNew?.addEventListener("click", () => {
-      createBrowserTab("");
-    });
-
-    const doNavigate = () => {
-      if (activeBrowserTab === "preview") return;
-      const url = elements.browserAddressInput?.value || "";
-      navigateBrowserTab(activeBrowserTab, url);
-    };
-
-    elements.browserAddressGo?.addEventListener("click", doNavigate);
-    elements.browserAddressInput?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") doNavigate();
-    });
-
-    elements.previewRefresh?.addEventListener("click", () => {
-      if (activeBrowserTab === "preview") {
-        const selected = getSelectedWorkspace();
-        if (!selected?.appPort) return;
-        const src = `http://localhost:${selected.appPort}`;
-        const ws = wsFrames.get(selectedWorkspaceId);
-        if (ws) ws.appSrc = undefined;
-        startAppPreviewWithRetry(src, selected.appPort);
-      } else {
-        const wv = getTabIframe(activeBrowserTab);
-        if (wv) {
-          const url = wv.getURL ? wv.getURL() : wv.src;
-          if (url) wv.src = url;
-        }
-      }
-    });
-
-    elements.browserDevtools?.addEventListener("click", () => {
-      window.omniAPI.toggleDevTools();
-    });
-
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "F12") {
-        e.preventDefault();
-        window.omniAPI.toggleDevTools();
-      }
-    });
+    terminalTabsController?.bind();
   };
 
   /* ─── Workspace Surface ───────────────────────────────────────────── */
@@ -1392,8 +611,7 @@ window.__omniRendererInitialized = false;
       activeTerminalId = undefined;
       terminalTabs = [];
       renderTerminalTabBar();
-      bottomTerm?.reset();
-      focusedTerm?.reset();
+      terminalViewController?.resetBoth();
       if (elements.workspaceTitle) elements.workspaceTitle.textContent = "Omni";
       setStatus("Select or create a workspace to begin.");
       return;
@@ -1425,8 +643,7 @@ window.__omniRendererInitialized = false;
       persistBrowserTabState(terminalWorkspaceId);
 
       // Terminal reset
-      bottomTerm?.reset();
-      focusedTerm?.reset();
+      terminalViewController?.resetBoth();
 
       // Load incoming workspace's tab state
       browserTabs = ws.tabs;
@@ -1471,6 +688,7 @@ window.__omniRendererInitialized = false;
         ws.appSrc = nextAppSrc;
         ws.usingSrcDoc = false;
         ws.previewLoadingPort = selected.appPort;
+        renderPreviewLoading(ws.previewFrame, selected.appPort);
         startAppPreviewWithRetry(nextAppSrc, selected.appPort);
       }
     } else {
@@ -1495,207 +713,12 @@ window.__omniRendererInitialized = false;
   };
 
   /* ─── Workspace List ──────────────────────────────────────────────── */
-  const getFilteredSortedWorkspaces = () => {
-    const search = (elements.workspaceSearch?.value || "").trim().toLowerCase();
-    const sort = elements.workspaceSort?.value || "recent";
-
-    let list = workspaces;
-
-    // Filter
-    if (search) {
-      list = list.filter((w) =>
-        w.name.toLowerCase().includes(search) ||
-        (w.projectPath || "").toLowerCase().includes(search)
-      );
-    }
-
-    // Sort
-    list = [...list].sort((a, b) => {
-      if (sort === "name") return (a.name || "").localeCompare(b.name || "");
-      if (sort === "status") return (a.status || "").localeCompare(b.status || "");
-      if (sort === "favorites") {
-        const af = localStorage.getItem(`omni-fav-${a.id}`) === "true" ? 0 : 1;
-        const bf = localStorage.getItem(`omni-fav-${b.id}`) === "true" ? 0 : 1;
-        return af - bf || (a.name || "").localeCompare(b.name || "");
-      }
-      return 0; // recent — keep server order
-    });
-
-    return list;
-  };
-
+  let workspaceListController = null;
   const renderWorkspaceList = () => {
-    if (!elements.workspaceList) return;
-    elements.workspaceList.innerHTML = "";
-
-    const filtered = getFilteredSortedWorkspaces();
-
-    for (const workspace of filtered) {
-      const item = document.createElement("li");
-      item.className = "workspace-item";
-      if (workspace.id === selectedWorkspaceId) item.classList.add("selected");
-
-      const isFav = localStorage.getItem(`omni-fav-${workspace.id}`) === "true";
-      if (isFav) item.classList.add("favorite");
-
-      // Title row: status dot + name + favorite
-      const titleRow = document.createElement("div");
-      titleRow.className = "workspace-title-row";
-
-      const statusDot = document.createElement("span");
-      statusDot.className = `status-dot ${workspace.status || "stopped"}`;
-      statusDot.title = workspace.status || "stopped";
-
-      const name = document.createElement("strong");
-      name.textContent = workspace.name;
-
-      const favBtn = document.createElement("button");
-      favBtn.className = `favorite-button ${isFav ? "active" : ""}`;
-      favBtn.textContent = isFav ? "★" : "☆";
-      favBtn.title = isFav ? "Remove from favorites" : "Add to favorites";
-      favBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const next = !isFav;
-        localStorage.setItem(`omni-fav-${workspace.id}`, String(next));
-        renderWorkspaceList();
-      });
-
-      titleRow.append(statusDot, name, favBtn);
-
-      // Path
-      const pathEl = document.createElement("div");
-      pathEl.className = "workspace-path";
-      pathEl.textContent = workspace.projectPath || "";
-
-      // Meta badges
-      const meta = document.createElement("div");
-      meta.className = "workspace-meta";
-
-      const tierBadge = document.createElement("span");
-      tierBadge.className = `badge ${workspace.resourceTier || "idle"}`;
-      tierBadge.textContent = workspace.resourceTier || "idle";
-      meta.append(tierBadge);
-
-      if (workspace.terminalProgress && workspace.terminalProgress !== "idle") {
-        const terminalBadge = document.createElement("span");
-        terminalBadge.className = `badge ${workspace.terminalProgress}`;
-        terminalBadge.textContent = workspace.terminalProgress;
-        meta.append(terminalBadge);
-      }
-
-      if (workspace.appPort) {
-        const portBadge = document.createElement("span");
-        portBadge.className = "badge";
-        portBadge.style.background = "var(--bg-active)";
-        portBadge.style.color = "var(--text-tertiary)";
-        portBadge.textContent = `:${workspace.appPort}`;
-        meta.append(portBadge);
-      }
-
-      // Actions (shown on hover)
-      const actions = document.createElement("div");
-      actions.className = "item-actions";
-
-      const openBtn = document.createElement("button");
-      openBtn.textContent = "Open";
-      openBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        selectedWorkspaceId = workspace.id;
-        await api.openWorkspace(workspace.id);
-        await api.focusWorkspace(workspace.id);
-        await refresh({ loadActivity: true });
-      });
-
-      const startStopBtn = document.createElement("button");
-      startStopBtn.textContent = workspace.status === "running" ? "Stop" : "Start";
-      startStopBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (workspace.status === "running") {
-          await api.stopWorkspace(workspace.id);
-        } else {
-          await api.startWorkspace(workspace.id);
-        }
-        await refresh();
-      });
-
-      const portBtn = document.createElement("button");
-      portBtn.textContent = "Port";
-      portBtn.title = "Set app preview port";
-      portBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const value = await showPrompt("Enter app port:", workspace.appPort ? String(workspace.appPort) : "3000");
-        if (value === null) return;
-        const parsed = Number(value);
-        if (!Number.isFinite(parsed) || parsed <= 0) return;
-        await api.setAppPort(workspace.id, parsed);
-        await refresh();
-      });
-
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "danger";
-      removeBtn.textContent = "Remove";
-      removeBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const confirmed = window.confirm(`Remove session "${workspace.name}"?`);
-        if (!confirmed) return;
-        try {
-          await api.disposeWorkspace(workspace.id);
-          if (selectedWorkspaceId === workspace.id) selectedWorkspaceId = undefined;
-          await refresh();
-        } catch (error) {
-          const msg = error?.message || "Failed to remove session";
-          setStatus(`Failed: ${msg}`, true);
-        }
-      });
-
-      actions.append(openBtn, startStopBtn, portBtn, removeBtn);
-
-      item.append(titleRow, pathEl, meta, actions);
-
-      // Click to select + view
-      item.addEventListener("click", async () => {
-        selectedWorkspaceId = workspace.id;
-        if (elements.diagnostics) {
-          elements.diagnostics.textContent = JSON.stringify(workspace, null, 2);
-        }
-        renderWorkspaceList(); // Re-render for selection styling
-        // Sync focus state with backend so resource tiers update immediately
-        await api.focusWorkspace(workspace.id);
-        await loadActivity();
-        await renderWorkspaceSurface();
-      });
-
-      elements.workspaceList.append(item);
-    }
+    workspaceListController?.renderWorkspaceList();
   };
-
-  /* ─── Session Tabs ────────────────────────────────────────────────── */
   const renderSessionTabs = () => {
-    if (!elements.sessionTabs) return;
-    elements.sessionTabs.innerHTML = "";
-
-    for (const workspace of workspaces) {
-      const tab = document.createElement("button");
-      tab.className = "session-tab";
-      if (workspace.id === selectedWorkspaceId) tab.classList.add("active");
-      tab.textContent = workspace.name;
-      tab.title = workspace.projectPath;
-      tab.addEventListener("click", async () => {
-        selectedWorkspaceId = workspace.id;
-        await api.focusWorkspace(workspace.id);
-        await refresh({ loadActivity: true });
-      });
-      elements.sessionTabs.append(tab);
-    }
-
-    const newTab = document.createElement("button");
-    newTab.className = "session-tab new-session";
-    newTab.textContent = "+ New";
-    newTab.title = "Create a new workspace";
-    newTab.addEventListener("click", () => {
-      openWorkspaceModal();
-    });
-    elements.sessionTabs.append(newTab);
+    workspaceListController?.renderSessionTabs();
   };
 
   /* ─── Activity Loading ────────────────────────────────────────────── */
@@ -1711,23 +734,10 @@ window.__omniRendererInitialized = false;
 
   /* ─── Selected Workspace Info ─────────────────────────────────────── */
   const renderSelectedWorkspaceDiagnostics = () => {
-    const selected = getSelectedWorkspace();
-    if (elements.diagnostics) {
-      elements.diagnostics.textContent = selected
-        ? JSON.stringify(selected, null, 2)
-        : "No workspace selected.";
+    if (selectedWorkspaceId === undefined) {
+      activityEvents = [];
     }
-
-    if (!selected) {
-      if (selectedWorkspaceId === undefined) {
-        activityEvents = [];
-        renderActivityDiagnostics();
-        setStatus("Select or create a workspace to begin.");
-      }
-      return;
-    }
-
-    setStatus(`${selected.name} \u2022 ${selected.status} \u2022 ${selected.resourceTier}`);
+    diagnosticsController?.renderSelectedWorkspaceDiagnostics();
   };
 
   /* ─── Workspace Update Batching ───────────────────────────────────── */
@@ -1803,216 +813,8 @@ window.__omniRendererInitialized = false;
   };
 
   /* ─── Quick Actions Palette ───────────────────────────────────────── */
-  const quickActions = [
-    { group: "Workspaces", title: "New Workspace", key: "n", action: () => openWorkspaceModal() },
-    { group: "Workspaces", title: "Refresh All", key: "r", action: () => void refresh({ loadActivity: true }) },
-    { group: "View", title: "Toggle Sidebar", key: "b", action: () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
-      updateSidebarState();
-    }},
-  ];
-
-  let quickActiveIndex = 0;
-
-  const openQuickActions = () => {
-    if (!elements.quickActionsOverlay) return;
-    elements.quickActionsOverlay.classList.remove("hidden");
-    elements.quickActionsSearch.value = "";
-    quickActiveIndex = 0;
-    renderQuickActions();
-    setTimeout(() => elements.quickActionsSearch?.focus(), 50);
-  };
-
-  const closeQuickActions = () => {
-    if (!elements.quickActionsOverlay) return;
-    elements.quickActionsOverlay.classList.add("hidden");
-  };
-
-  const getFilteredQuickActions = () => {
-    const q = (elements.quickActionsSearch?.value || "").trim().toLowerCase();
-    // Build full list: static actions + dynamic workspace actions
-    const wsActions = workspaces.map((w) => ({
-      group: "Switch Workspace",
-      title: w.name,
-      subtitle: w.projectPath,
-      action: async () => {
-        selectedWorkspaceId = w.id;
-        await api.focusWorkspace(w.id);
-        await refresh({ loadActivity: true });
-      },
-    }));
-
-    const all = [...quickActions, ...wsActions];
-    if (!q) return all;
-    return all.filter((a) =>
-      a.title.toLowerCase().includes(q) ||
-      (a.subtitle || "").toLowerCase().includes(q) ||
-      (a.group || "").toLowerCase().includes(q)
-    );
-  };
-
-  const renderQuickActions = () => {
-    if (!elements.quickActionsList) return;
-    elements.quickActionsList.innerHTML = "";
-
-    const filtered = getFilteredQuickActions();
-    let lastGroup = "";
-
-    filtered.forEach((action, i) => {
-      if (action.group !== lastGroup) {
-        const groupEl = document.createElement("li");
-        groupEl.className = "quick-group";
-        groupEl.textContent = action.group;
-        elements.quickActionsList.append(groupEl);
-        lastGroup = action.group;
-      }
-
-      const item = document.createElement("li");
-      item.className = `quick-item${i === quickActiveIndex ? " active" : ""}`;
-
-      const titleEl = document.createElement("span");
-      titleEl.className = "quick-title";
-      titleEl.textContent = action.title;
-      item.append(titleEl);
-
-      if (action.subtitle) {
-        const sub = document.createElement("span");
-        sub.className = "quick-subtitle";
-        sub.textContent = action.subtitle;
-        item.append(sub);
-      }
-
-      if (action.key) {
-        const hint = document.createElement("span");
-        hint.className = "quick-keyhint";
-        hint.textContent = action.key;
-        item.append(hint);
-      }
-
-      item.addEventListener("click", () => {
-        closeQuickActions();
-        action.action();
-      });
-
-      elements.quickActionsList.append(item);
-    });
-  };
-
-  const bindQuickActions = () => {
-    elements.quickActionsButton?.addEventListener("click", openQuickActions);
-
-    elements.quickActionsOverlay?.addEventListener("click", (e) => {
-      if (e.target === elements.quickActionsOverlay) closeQuickActions();
-    });
-
-    elements.quickActionsSearch?.addEventListener("input", () => {
-      quickActiveIndex = 0;
-      renderQuickActions();
-    });
-
-    elements.quickActionsSearch?.addEventListener("keydown", (e) => {
-      const filtered = getFilteredQuickActions();
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        quickActiveIndex = Math.min(quickActiveIndex + 1, filtered.length - 1);
-        renderQuickActions();
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        quickActiveIndex = Math.max(quickActiveIndex - 1, 0);
-        renderQuickActions();
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (filtered[quickActiveIndex]) {
-          closeQuickActions();
-          filtered[quickActiveIndex].action();
-        }
-      } else if (e.key === "Escape") {
-        closeQuickActions();
-      }
-    });
-
-    // Global shortcut
-    document.addEventListener("keydown", (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.key.toLowerCase() === paletteShortcut) {
-        e.preventDefault();
-        if (elements.quickActionsOverlay?.classList.contains("hidden")) {
-          openQuickActions();
-        } else {
-          closeQuickActions();
-        }
-      }
-      if (e.key === "Escape" && !elements.quickActionsOverlay?.classList.contains("hidden")) {
-        closeQuickActions();
-      }
-    });
-  };
-
-  /* ─── BYOK Key Management ─────────────────────────────────────────── */
-  const refreshKeyList = async () => {
-    if (!api?.listKeys || !elements.keyList) return;
-    try {
-      const keys = await api.listKeys();
-      elements.keyList.innerHTML = "";
-      if (Array.isArray(keys) && keys.length > 0) {
-        for (const k of keys) {
-          const li = document.createElement("li");
-          li.style.cssText = "font-size:11px;color:var(--text-tertiary);padding:2px 0;";
-          li.textContent = `${k.provider || k}: configured`;
-          elements.keyList.append(li);
-        }
-      }
-    } catch {}
-  };
-
-  const bindBYOK = () => {
-    elements.saveOpenai?.addEventListener("click", async () => {
-      const val = elements.openaiKey?.value?.trim();
-      if (!val || !api?.setKey) return;
-      try {
-        await api.setKey("openai", val);
-        elements.openaiKey.value = "";
-        await refreshKeyList();
-      } catch (e) {
-        alert(`Failed to save OpenAI key: ${e?.message || e}`);
-      }
-    });
-
-    elements.deleteOpenai?.addEventListener("click", async () => {
-      if (!api?.deleteKey) return;
-      try {
-        await api.deleteKey("openai");
-        await refreshKeyList();
-      } catch (e) {
-        alert(`Failed to delete OpenAI key: ${e?.message || e}`);
-      }
-    });
-
-    elements.saveAnthropic?.addEventListener("click", async () => {
-      const val = elements.anthropicKey?.value?.trim();
-      if (!val || !api?.setKey) return;
-      try {
-        await api.setKey("anthropic", val);
-        elements.anthropicKey.value = "";
-        await refreshKeyList();
-      } catch (e) {
-        alert(`Failed to save Anthropic key: ${e?.message || e}`);
-      }
-    });
-
-    elements.deleteAnthropic?.addEventListener("click", async () => {
-      if (!api?.deleteKey) return;
-      try {
-        await api.deleteKey("anthropic");
-        await refreshKeyList();
-      } catch (e) {
-        alert(`Failed to delete Anthropic key: ${e?.message || e}`);
-      }
-    });
-
-    refreshKeyList();
-  };
+  let quickActionsController = null;
+  let initController = null;
 
   /* ─── Settings ────────────────────────────────────────────────────── */
   const bindSettings = () => {
@@ -2042,140 +844,99 @@ window.__omniRendererInitialized = false;
 
   /* ─── Workspace Search / Sort ─────────────────────────────────────── */
   const bindWorkspaceFilters = () => {
-    elements.workspaceSearch?.addEventListener("input", renderWorkspaceList);
-    elements.workspaceSort?.addEventListener("change", renderWorkspaceList);
+    workspaceListController?.bindFilters();
   };
 
   /* ─── Initialization ──────────────────────────────────────────────── */
   const init = async () => {
-    if (!api || typeof api.listWorkspaces !== "function") {
-      setStatus("Desktop bridge unavailable. Close all app windows and relaunch.", true);
-      return;
-    }
-
-    const savedTheme = localStorage.getItem("omni-theme") || "system";
-    applyTheme(savedTheme);
-    updateThemeToggleVisual();
-    elements.themeToggle?.addEventListener("click", () => {
-      cycleThemeMode();
+    initController = modules.createInitController?.() || null;
+    await initController?.init({
+      api,
+      modules,
+      elements,
+      setStatus,
+      persistIdeThemePreference,
+      updateTerminalTheme,
+      reskinPreviewPlaceholders,
+      rebuildIdeFramesForTheme,
+      applyThemeToAllIdeFrames,
+      fitAllTerminals,
+      getSelectedWorkspace,
+      setThemeController: (next) => { themeController = next; },
+      getThemeController: () => themeController,
+      setTerminalViewController: (next) => { terminalViewController = next; },
+      getTerminalViewController: () => terminalViewController,
+      setUiChromeController: (next) => { uiChromeController = next; },
+      setDiagnosticsController: (next) => { diagnosticsController = next; },
+      setBrowserTabsController: (next) => { browserTabsController = next; },
+      setTerminalTabsController: (next) => { terminalTabsController = next; },
+      setWorkspaceListController: (next) => { workspaceListController = next; },
+      setWorkspaceModalController: (next) => { workspaceModalController = next; },
+      getWorkspaceModalController: () => workspaceModalController,
+      setPreviewManager: (next) => { previewManager = next; },
+      setQuickActionsController: (next) => { quickActionsController = next; },
+      getQuickActionsController: () => quickActionsController,
+      getSelectedWorkspaceId: () => selectedWorkspaceId,
+      setSelectedWorkspaceId: (next) => { selectedWorkspaceId = next; },
+      getActiveTerminalId: () => activeTerminalId,
+      setActiveTerminalId: (next) => { activeTerminalId = next; },
+      getLayoutMode: () => layoutMode,
+      setLayoutMode: (next) => { layoutMode = next; },
+      getFocusedSurface: () => focusedSurface,
+      setFocusedSurface: (next) => { focusedSurface = next; },
+      getSidebarCollapsed: () => sidebarCollapsed,
+      setSidebarCollapsed: (next) => { sidebarCollapsed = next; },
+      getIdeRatio: () => ideRatio,
+      setIdeRatio: (next) => { ideRatio = next; },
+      getWorkspaces: () => workspaces,
+      getBrowserTabs: () => browserTabs,
+      setBrowserTabs: (next) => { browserTabs = next; },
+      getActiveBrowserTab: () => activeBrowserTab,
+      setActiveBrowserTab: (next) => { activeBrowserTab = next; },
+      getBrowserTabCounter: () => browserTabCounter,
+      setBrowserTabCounter: (next) => { browserTabCounter = next; },
+      getTerminalTabs: () => terminalTabs,
+      setTerminalTabs: (next) => { terminalTabs = next; },
+      getProtocolEvents: () => protocolEvents,
+      setProtocolEvents: (next) => { protocolEvents = next; },
+      getActivityEvents: () => activityEvents,
+      setActivityEvents: (next) => { activityEvents = next; },
+      getRestoreEvents: () => restoreEvents,
+      setRestoreEvents: (next) => { restoreEvents = next; },
+      wsFrames,
+      terminalTabsByWorkspace,
+      terminalBufferByKey,
+      terminalBufferKey,
+      getBottomTerm,
+      getFocusedTerm,
+      showPrompt,
+      refresh,
+      loadActivity,
+      renderWorkspaceSurface,
+      openWorkspaceModal,
+      toggleSidebar,
+      bindSurfaceSplitter,
+      bindLayoutSwitcher,
+      bindPanelCardToggles,
+      bindBottomPanelTabs,
+      bindBrowserTabs,
+      bindTerminalTabs,
+      bindSettings,
+      bindWorkspaceFilters,
+      renderProtocolDiagnostics,
+      renderActivityDiagnostics,
+      renderRestoreDiagnostics,
+      scheduleWorkspaceUpdateFlush,
+      setPendingWorkspacesPayload: (next) => { pendingWorkspacesPayload = next; },
+      startAppPreviewWithRetry,
+      getResolvedTheme,
+      getActivePreviewFrame,
+      switchBrowserTab,
+      updateSidebarState,
+      applyIdeRatio,
+      applyLayoutMode,
+      getPaletteShortcut: () => paletteShortcut,
     });
-
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-      if (currentTheme !== "system") return;
-      persistIdeThemePreference();
-      updateTerminalTheme();
-      reskinPreviewPlaceholders();
-      rebuildIdeFramesForTheme();
-      applyThemeToAllIdeFrames();
-    });
-
-    updateSidebarState();
-    applyIdeRatio(ideRatio);
-    applyLayoutMode();
-    bindSurfaceSplitter();
-    bindLayoutSwitcher();
-    bindPanelCardToggles();
-    bindBottomPanelTabs();
-    bindBrowserTabs();
-    bindTerminalTabs();
-
-    bindQuickActions();
-    bindBYOK();
-    bindSettings();
-    bindWorkspaceFilters();
-
-    // Clear any stuck focus-mode state from previous versions
-    localStorage.removeItem("omni-focus-mode");
-
-    elements.workspaceSidebarToggle?.addEventListener("click", () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
-      updateSidebarState();
-    });
-
-    elements.workspaceAdd?.addEventListener("click", () => {
-      openWorkspaceModal();
-    });
-    elements.workspaceModalClose?.addEventListener("click", () => {
-      closeWorkspaceModal();
-    });
-    elements.workspaceModalCancel?.addEventListener("click", () => {
-      closeWorkspaceModal();
-    });
-    elements.workspaceModalOverlay?.addEventListener("click", (event) => {
-      if (event.target === elements.workspaceModalOverlay) {
-        closeWorkspaceModal();
-      }
-    });
-    elements.modalBrowsePath?.addEventListener("click", () => {
-      void browseWorkspaceFolder();
-    });
-    elements.workspaceModalCreate?.addEventListener("click", () => {
-      void submitWorkspaceCreate();
-    });
-    [elements.modalProjectPath, elements.modalWorkspaceName].forEach((input) => {
-      input?.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          void submitWorkspaceCreate();
-        }
-        if (event.key === "Escape") {
-          event.preventDefault();
-          closeWorkspaceModal();
-        }
-      });
-    });
-
-    // Protocol filters
-    elements.protocolWorkspaceFilter?.addEventListener("change", renderProtocolDiagnostics);
-    elements.protocolSeverityFilter?.addEventListener("change", renderProtocolDiagnostics);
-
-    // Initialize xterm.js terminals
-    try { initTerminals(); } catch (e) { console.warn("xterm init failed:", e); }
-    // Apply correct terminal theme based on current settings
-    updateTerminalTheme();
-    persistIdeThemePreference();
-    window.addEventListener("resize", () => fitAllTerminals());
-    // Observe bottom panel resizes for terminal fit
-    const bottomPanel = document.querySelector(".bottom-panel");
-    if (bottomPanel && typeof ResizeObserver !== "undefined") {
-      new ResizeObserver(() => { try { bottomFit?.fit(); } catch {} }).observe(bottomPanel);
-    }
-
-    // IPC listeners
-    api.onWorkspacesUpdated((payload) => {
-      pendingWorkspacesPayload = payload;
-      scheduleWorkspaceUpdateFlush();
-    });
-
-    api.onTerminalData((workspaceId, terminalId, data) => {
-      const key = terminalBufferKey(workspaceId, terminalId);
-      const existing = terminalBufferByKey.get(key) || "";
-      terminalBufferByKey.set(key, existing + data);
-
-      if (workspaceId !== selectedWorkspaceId || terminalId !== activeTerminalId) return;
-      bottomTerm?.write(data);
-      focusedTerm?.write(data);
-    });
-
-    api.onProtocolDiagnosticsUpdated((events) => {
-      protocolEvents = events;
-      renderProtocolDiagnostics();
-    });
-
-    api.onActivityDiagnosticsUpdated((workspaceId, events) => {
-      if (workspaceId !== selectedWorkspaceId) return;
-      activityEvents = events;
-      renderActivityDiagnostics();
-    });
-
-    api.onRestoreDiagnosticsUpdated((events) => {
-      restoreEvents = events;
-      renderRestoreDiagnostics();
-    });
-
-    await refresh({ loadActivity: true });
-    window.__omniRendererInitialized = true;
   };
 
   void init();
