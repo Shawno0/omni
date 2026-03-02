@@ -213,7 +213,7 @@ function createShellWindow(): BrowserWindow {
     width: 1280,
     height: 860,
     backgroundColor: "#1f1f1f",
-    title: "OmniContext",
+    title: "Omni",
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

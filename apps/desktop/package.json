@@ -2,8 +2,8 @@
   "name": "@omni/desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "OmniContext desktop supervisor",
-  "author": "OmniContext",
+  "description": "Omni desktop supervisor",
+  "author": "Omni",
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {

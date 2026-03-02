@@ -21,7 +21,7 @@ export class ViewCoordinator {
     const window = new BrowserWindow({
       width: 1700,
       height: 1020,
-      title: `OmniContext • ${workspace.name}`,
+      title: `Omni • ${workspace.name}`,
       backgroundColor: "#0f1115",
     });
 

@@ -1,9 +1,9 @@
-appId: com.omnicontext.desktop
-productName: OmniContext
+appId: com.omni.desktop
+productName: Omni
 protocols:
-  - name: OmniContext Link
+  - name: Omni Link
     schemes:
-      - omnicontext
+      - omni
 files:
   - dist/**
   - src/renderer/**
@@ -18,7 +18,7 @@ win:
   signAndEditExecutable: false
   target:
     - nsis
-  artifactName: OmniContext-${version}-setup.${ext}
+  artifactName: Omni-${version}-setup.${ext}
 nsis:
   oneClick: false
   perMachine: false

@@ -1,5 +1,5 @@
 param(
-  [string]$Scheme = "omnicontext"
+  [string]$Scheme = "omni"
 )
 
 $ErrorActionPreference = "Stop"

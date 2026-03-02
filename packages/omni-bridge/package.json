@@ -1,7 +1,7 @@
 {
   "name": "omni-bridge",
   "displayName": "Omni Bridge",
-  "description": "OmniContext BYOK bridge for language model chat and tools",
+  "description": "Omni BYOK bridge for language model chat and tools",
   "version": "0.1.0",
   "publisher": "omni",
   "engines": {

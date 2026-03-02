@@ -12,7 +12,6 @@ window.__omniRendererInitialized = false;
   /* ─── Element References ──────────────────────────────────────────── */
   const elements = {
     appShell: el("app"),
-    sidebarToggle: el("sidebar-toggle"),
     workspaceSidebarToggle: el("workspace-sidebar-toggle"),
     workspaceStatus: el("workspace-status"),
     workspaceGrid: el("workspace-grid"),
@@ -22,12 +21,17 @@ window.__omniRendererInitialized = false;
     ideFrameContent: el("ide-frame-content"),
     diagnostics: el("diagnostics"),
     workspaceList: el("workspace-list"),
-    projectPath: el("project-path"),
-    workspaceName: el("workspace-name"),
-    browsePath: el("browse-path"),
-    createWorkspace: el("create-workspace"),
+    workspaceAdd: el("workspace-add"),
+    workspaceModalOverlay: el("workspace-modal-overlay"),
+    workspaceModalClose: el("workspace-modal-close"),
+    workspaceModalCancel: el("workspace-modal-cancel"),
+    workspaceModalCreate: el("workspace-modal-create"),
+    modalProjectPath: el("modal-project-path"),
+    modalWorkspaceName: el("modal-workspace-name"),
+    modalBrowsePath: el("modal-browse-path"),
     sessionTabs: el("session-tabs"),
-    themeSelect: el("theme-select"),
+    themeToggle: el("theme-toggle"),
+    themeToggleIcon: el("theme-toggle-icon"),
     protocolDiagnostics: el("protocol-diagnostics"),
     protocolWorkspaceFilter: el("protocol-workspace-filter"),
     protocolSeverityFilter: el("protocol-severity-filter"),
@@ -261,6 +265,92 @@ window.__omniRendererInitialized = false;
     currentTheme = theme;
   };
 
+  const themeIconByMode = {
+    light: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path></svg>`,
+    dark: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"></path></svg>`,
+    system: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"></rect><path d="M8 20h8"></path><path d="M12 18v2"></path></svg>`,
+  };
+
+  const updateThemeToggleVisual = () => {
+    const mode = currentTheme === "light" || currentTheme === "dark" ? currentTheme : "system";
+    if (elements.themeToggleIcon) {
+      elements.themeToggleIcon.innerHTML = themeIconByMode[mode];
+    }
+    if (elements.themeToggle) {
+      const nextMode = mode === "system" ? "light" : mode === "light" ? "dark" : "system";
+      elements.themeToggle.title = `Theme: ${mode[0].toUpperCase()}${mode.slice(1)} (next: ${nextMode})`;
+      elements.themeToggle.setAttribute("aria-label", `Theme ${mode}`);
+    }
+  };
+
+  const cycleThemeMode = () => {
+    const nextMode = currentTheme === "system" ? "light" : currentTheme === "light" ? "dark" : "system";
+    localStorage.setItem("omni-theme", nextMode);
+    applyTheme(nextMode);
+    persistIdeThemePreference();
+    updateThemeToggleVisual();
+    updateTerminalTheme();
+    reskinPreviewPlaceholders();
+    rebuildIdeFramesForTheme();
+    applyThemeToAllIdeFrames();
+  };
+
+  const openWorkspaceModal = () => {
+    elements.workspaceModalOverlay?.classList.remove("hidden");
+    setTimeout(() => {
+      elements.modalProjectPath?.focus();
+      elements.modalProjectPath?.select();
+    }, 10);
+  };
+
+  const closeWorkspaceModal = () => {
+    elements.workspaceModalOverlay?.classList.add("hidden");
+  };
+
+  const browseWorkspaceFolder = async () => {
+    if (!api?.browseFolder) return;
+    const folderPath = await api.browseFolder();
+    if (!folderPath) return;
+    if (elements.modalProjectPath) elements.modalProjectPath.value = folderPath;
+    if (elements.modalWorkspaceName && !elements.modalWorkspaceName.value.trim()) {
+      const parts = folderPath.replace(/[\\/]+$/, "").split(/[\\/]/);
+      const folderName = parts[parts.length - 1] || "";
+      elements.modalWorkspaceName.value = folderName;
+    }
+    elements.modalWorkspaceName?.focus();
+    elements.modalWorkspaceName?.select();
+  };
+
+  const submitWorkspaceCreate = async () => {
+    try {
+      const projectPath = String(elements.modalProjectPath?.value || "").trim();
+      const name = String(elements.modalWorkspaceName?.value || "").trim();
+
+      if (!projectPath) {
+        setStatus("Project path is required.", true);
+        return;
+      }
+
+      const created = await api.createWorkspace({
+        projectPath,
+        name: name || undefined,
+      });
+
+      selectedWorkspaceId = created.id;
+      await api.openWorkspace(created.id);
+      await api.focusWorkspace(created.id);
+
+      if (elements.modalProjectPath) elements.modalProjectPath.value = "";
+      if (elements.modalWorkspaceName) elements.modalWorkspaceName.value = "";
+      closeWorkspaceModal();
+
+      await refresh({ loadActivity: true });
+    } catch (error) {
+      const msg = error?.message || "Failed to create workspace";
+      setStatus(`Failed: ${msg}`, true);
+    }
+  };
+
   const getResolvedTheme = () => {
     if (currentTheme === "light" || currentTheme === "dark") return currentTheme;
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -379,8 +469,18 @@ window.__omniRendererInitialized = false;
   /** Sync xterm terminal theme with the resolved app theme. */
   const updateTerminalTheme = () => {
     const theme = getResolvedTheme() === "dark" ? xtermDarkTheme : xtermLightTheme;
-    if (bottomTerm) bottomTerm.options.theme = theme;
-    if (focusedTerm) focusedTerm.options.theme = theme;
+    if (bottomTerm) {
+      bottomTerm.options.theme = theme;
+      if (typeof bottomTerm.refresh === "function") {
+        bottomTerm.refresh(0, Math.max(0, bottomTerm.rows - 1));
+      }
+    }
+    if (focusedTerm) {
+      focusedTerm.options.theme = theme;
+      if (typeof focusedTerm.refresh === "function") {
+        focusedTerm.refresh(0, Math.max(0, focusedTerm.rows - 1));
+      }
+    }
   };
 
   /* ─── Sidebar State ───────────────────────────────────────────────── */
@@ -699,22 +799,102 @@ window.__omniRendererInitialized = false;
     appPreviewTargetSrc = null;
   };
 
-  const showPreviewLoading = (port) => {
-    const frame = getActivePreviewFrame();
-    if (!frame) return;
-    switchBrowserTab("preview", { persist: false });
-    const loadingHtml = `<!doctype html><html><head><style>
+  const isExpectedNavigationAbort = (error) => {
+    if (!error) return false;
+    const code = error.code ?? error.errno;
+    if (code === "ERR_ABORTED" || code === -3 || code === "-3") {
+      return true;
+    }
+    return String(error.message || "").includes("ERR_ABORTED");
+  };
+
+  const setWebviewSrcSafe = (frame, nextSrc) => {
+    if (!frame || !nextSrc) return;
+    if (frame.src === nextSrc) return;
+
+    try {
+      if (typeof frame.loadURL === "function") {
+        const pending = frame.loadURL(nextSrc);
+        if (pending && typeof pending.catch === "function") {
+          pending.catch((error) => {
+            if (!isExpectedNavigationAbort(error)) {
+              console.warn("[preview] webview navigation failed", error);
+            }
+          });
+        }
+        return;
+      }
+    } catch (error) {
+      if (!isExpectedNavigationAbort(error)) {
+        console.warn("[preview] webview navigation threw", error);
+      }
+      return;
+    }
+
+    frame.src = nextSrc;
+  };
+
+  const buildPreviewLoadingHtml = (port) => {
+    const isDark = getResolvedTheme() === "dark";
+    const background = isDark ? "#1f1f1f" : "#ffffff";
+    const textPrimary = isDark ? "#9d9d9d" : "#4b5563";
+    const textSecondary = isDark ? "#6e7681" : "#9ca3af";
+    const spinnerBase = isDark ? "#3c3c3c" : "#d1d5db";
+    const spinnerTop = isDark ? "#0078d4" : "#2563eb";
+    return `<!doctype html><html><head><style>
       body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh;
-             font:14px system-ui; color:#9d9d9d; background:#1f1f1f; flex-direction:column; gap:12px; }
-      .spinner { width:24px; height:24px; border:3px solid #3c3c3c; border-top-color:#0078d4;
+             font:14px system-ui; color:${textPrimary}; background:${background}; flex-direction:column; gap:12px; }
+      .spinner { width:24px; height:24px; border:3px solid ${spinnerBase}; border-top-color:${spinnerTop};
                  border-radius:50%; animation:spin 0.8s linear infinite; }
       @keyframes spin { to { transform:rotate(360deg); } }
     </style></head><body>
       <div class="spinner"></div>
       <div>Waiting for server on port ${port}\u2026</div>
-      <div style="font-size:12px;color:#6e7681;">Will auto-load when ready</div>
+      <div style="font-size:12px;color:${textSecondary};">Will auto-load when ready</div>
     </body></html>`;
-    frame.src = "data:text/html;charset=utf-8," + encodeURIComponent(loadingHtml);
+  };
+
+  const buildPreviewNoPortHtml = () => {
+    const isDark = getResolvedTheme() === "dark";
+    const background = isDark ? "#1f1f1f" : "#ffffff";
+    const text = isDark ? "#9d9d9d" : "#4b5563";
+    return `<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:${text};background:${background};'>Set an app port to load the browser preview.</body></html>`;
+  };
+
+  const renderPreviewLoading = (frame, port) => {
+    if (!frame) return;
+    const src = "data:text/html;charset=utf-8," + encodeURIComponent(buildPreviewLoadingHtml(port));
+    setWebviewSrcSafe(frame, src);
+  };
+
+  const renderPreviewNoPort = (frame) => {
+    if (!frame) return;
+    const src = "data:text/html;charset=utf-8," + encodeURIComponent(buildPreviewNoPortHtml());
+    setWebviewSrcSafe(frame, src);
+  };
+
+  const reskinPreviewPlaceholders = () => {
+    wsFrames.forEach((ws) => {
+      if (typeof ws.previewLoadingPort === "number") {
+        renderPreviewLoading(ws.previewFrame, ws.previewLoadingPort);
+        return;
+      }
+      if (ws.usingSrcDoc) {
+        renderPreviewNoPort(ws.previewFrame);
+      }
+    });
+  };
+
+  const showPreviewLoading = (port) => {
+    const frame = getActivePreviewFrame();
+    if (!frame) return;
+    switchBrowserTab("preview", { persist: false });
+    const ws = wsFrames.get(selectedWorkspaceId);
+    if (ws) {
+      ws.previewLoadingPort = port;
+      ws.usingSrcDoc = false;
+    }
+    renderPreviewLoading(frame, port);
   };
 
   const startAppPreviewWithRetry = (targetSrc, port) => {
@@ -736,9 +916,13 @@ window.__omniRendererInitialized = false;
 
     const loadPreview = (src) => {
       stopAppPreviewRetry();
-      const frame = wsFrames.get(capturedWsId)?.previewFrame;
+      const ws = wsFrames.get(capturedWsId);
+      if (ws) {
+        ws.previewLoadingPort = undefined;
+      }
+      const frame = ws?.previewFrame;
       if (!frame) return;
-      frame.src = src;
+      setWebviewSrcSafe(frame, src);
     };
 
     tryLoad().then((ok) => {
@@ -819,6 +1003,7 @@ window.__omniRendererInitialized = false;
       previewFrame,
       appSrc: undefined,
       usingSrcDoc: false,
+      previewLoadingPort: undefined,
       tabs,
       activeTab,
     };
@@ -1209,7 +1394,7 @@ window.__omniRendererInitialized = false;
       renderTerminalTabBar();
       bottomTerm?.reset();
       focusedTerm?.reset();
-      if (elements.workspaceTitle) elements.workspaceTitle.textContent = "OmniContext";
+      if (elements.workspaceTitle) elements.workspaceTitle.textContent = "Omni";
       setStatus("Select or create a workspace to begin.");
       return;
     }
@@ -1285,12 +1470,14 @@ window.__omniRendererInitialized = false;
       if (ws.usingSrcDoc || ws.appSrc !== nextAppSrc) {
         ws.appSrc = nextAppSrc;
         ws.usingSrcDoc = false;
+        ws.previewLoadingPort = selected.appPort;
         startAppPreviewWithRetry(nextAppSrc, selected.appPort);
       }
     } else {
       stopAppPreviewRetry();
       if (!ws.usingSrcDoc) {
-        ws.previewFrame.src = "data:text/html;charset=utf-8," + encodeURIComponent("<!doctype html><html><body style='margin:0;padding:24px;font:14px system-ui;color:#9d9d9d;background:#1f1f1f;'>Set an app port to load the browser preview.</body></html>");
+        ws.previewLoadingPort = undefined;
+        renderPreviewNoPort(ws.previewFrame);
         ws.appSrc = undefined;
         ws.usingSrcDoc = true;
       }
@@ -1506,7 +1693,7 @@ window.__omniRendererInitialized = false;
     newTab.textContent = "+ New";
     newTab.title = "Create a new workspace";
     newTab.addEventListener("click", () => {
-      elements.projectPath?.focus();
+      openWorkspaceModal();
     });
     elements.sessionTabs.append(newTab);
   };
@@ -1617,7 +1804,7 @@ window.__omniRendererInitialized = false;
 
   /* ─── Quick Actions Palette ───────────────────────────────────────── */
   const quickActions = [
-    { group: "Workspaces", title: "New Workspace", key: "n", action: () => elements.projectPath?.focus() },
+    { group: "Workspaces", title: "New Workspace", key: "n", action: () => openWorkspaceModal() },
     { group: "Workspaces", title: "Refresh All", key: "r", action: () => void refresh({ loadActivity: true }) },
     { group: "View", title: "Toggle Sidebar", key: "b", action: () => {
       sidebarCollapsed = !sidebarCollapsed;
@@ -1866,26 +2053,18 @@ window.__omniRendererInitialized = false;
       return;
     }
 
-    // Theme
-    if (elements.themeSelect) {
-      const saved = localStorage.getItem("omni-theme") || "system";
-      elements.themeSelect.value = saved;
-      applyTheme(saved);
-      elements.themeSelect.addEventListener("change", () => {
-        localStorage.setItem("omni-theme", elements.themeSelect.value);
-        applyTheme(elements.themeSelect.value);
-        persistIdeThemePreference();
-        // Sync terminal + IDE themes
-        updateTerminalTheme();
-        rebuildIdeFramesForTheme();
-        applyThemeToAllIdeFrames();
-      });
-    }
+    const savedTheme = localStorage.getItem("omni-theme") || "system";
+    applyTheme(savedTheme);
+    updateThemeToggleVisual();
+    elements.themeToggle?.addEventListener("click", () => {
+      cycleThemeMode();
+    });
 
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (currentTheme !== "system") return;
       persistIdeThemePreference();
       updateTerminalTheme();
+      reskinPreviewPlaceholders();
       rebuildIdeFramesForTheme();
       applyThemeToAllIdeFrames();
     });
@@ -1908,63 +2087,43 @@ window.__omniRendererInitialized = false;
     // Clear any stuck focus-mode state from previous versions
     localStorage.removeItem("omni-focus-mode");
 
-    // Sidebar toggle
-    elements.sidebarToggle?.addEventListener("click", () => {
-      sidebarCollapsed = !sidebarCollapsed;
-      localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
-      updateSidebarState();
-    });
-
     elements.workspaceSidebarToggle?.addEventListener("click", () => {
       sidebarCollapsed = !sidebarCollapsed;
       localStorage.setItem("omni-sidebar-collapsed", String(sidebarCollapsed));
       updateSidebarState();
     });
 
-    // Browse for project folder
-    elements.browsePath?.addEventListener("click", async () => {
-      if (!api?.browseFolder) return;
-      const folderPath = await api.browseFolder();
-      if (!folderPath) return;
-      if (elements.projectPath) elements.projectPath.value = folderPath;
-      // Auto-populate session name from the folder name if the name field is empty
-      if (elements.workspaceName && !elements.workspaceName.value.trim()) {
-        const parts = folderPath.replace(/[\\/]+$/, "").split(/[\\/]/);
-        const folderName = parts[parts.length - 1] || "";
-        elements.workspaceName.value = folderName;
-      }
-      elements.workspaceName?.focus();
-      elements.workspaceName?.select();
+    elements.workspaceAdd?.addEventListener("click", () => {
+      openWorkspaceModal();
     });
-
-    // Create workspace
-    elements.createWorkspace?.addEventListener("click", async () => {
-      try {
-        const projectPath = String(elements.projectPath?.value || "").trim();
-        const name = String(elements.workspaceName?.value || "").trim();
-
-        if (!projectPath) {
-          setStatus("Project path is required.", true);
-          return;
-        }
-
-        const created = await api.createWorkspace({
-          projectPath,
-          name: name || undefined,
-        });
-
-        selectedWorkspaceId = created.id;
-        await api.openWorkspace(created.id);
-        await api.focusWorkspace(created.id);
-
-        if (elements.projectPath) elements.projectPath.value = "";
-        if (elements.workspaceName) elements.workspaceName.value = "";
-
-        await refresh({ loadActivity: true });
-      } catch (error) {
-        const msg = error?.message || "Failed to create workspace";
-        setStatus(`Failed: ${msg}`, true);
+    elements.workspaceModalClose?.addEventListener("click", () => {
+      closeWorkspaceModal();
+    });
+    elements.workspaceModalCancel?.addEventListener("click", () => {
+      closeWorkspaceModal();
+    });
+    elements.workspaceModalOverlay?.addEventListener("click", (event) => {
+      if (event.target === elements.workspaceModalOverlay) {
+        closeWorkspaceModal();
       }
+    });
+    elements.modalBrowsePath?.addEventListener("click", () => {
+      void browseWorkspaceFolder();
+    });
+    elements.workspaceModalCreate?.addEventListener("click", () => {
+      void submitWorkspaceCreate();
+    });
+    [elements.modalProjectPath, elements.modalWorkspaceName].forEach((input) => {
+      input?.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void submitWorkspaceCreate();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeWorkspaceModal();
+        }
+      });
     });
 
     // Protocol filters

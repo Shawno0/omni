@@ -1,5 +1,5 @@
 param(
-  [string]$Scheme = "omnicontext",
+  [string]$Scheme = "omni",
   [string]$ExecutablePath,
   [switch]$Unregister
 )
@@ -15,8 +15,8 @@ function Get-DefaultExecutablePath {
   param([string]$DesktopRoot)
 
   $candidates = @(
-    (Join-Path $DesktopRoot "out\win-unpacked\OmniContext.exe"),
-    (Join-Path $DesktopRoot "out\OmniContext.exe")
+    (Join-Path $DesktopRoot "out\win-unpacked\Omni.exe"),
+    (Join-Path $DesktopRoot "out\Omni.exe")
   )
 
   foreach ($packaged in $candidates) {
@@ -30,7 +30,7 @@ function Get-DefaultExecutablePath {
     return "`"$electronCmd`" `"$desktopRoot`""
   }
 
-  throw "No executable found. Pass -ExecutablePath to this script (path to OmniContext.exe)."
+  throw "No executable found. Pass -ExecutablePath to this script (path to Omni.exe)."
 }
 
 if ($Unregister) {
@@ -54,7 +54,7 @@ if (-not (Test-Path (Split-Path $effectivePath -Parent)) -and -not $effectivePat
 }
 
 New-Item -Path $registryPath -Force | Out-Null
-Set-ItemProperty -Path $registryPath -Name "(Default)" -Value "URL:OmniContext Link"
+Set-ItemProperty -Path $registryPath -Name "(Default)" -Value "URL:Omni Link"
 Set-ItemProperty -Path $registryPath -Name "URL Protocol" -Value ""
 
 New-Item -Path "$registryPath\DefaultIcon" -Force | Out-Null

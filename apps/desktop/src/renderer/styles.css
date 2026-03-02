@@ -1,5 +1,5 @@
 /* ========================================================================
-   OmniContext — Agentic Workspace Supervisor
+  Omni — Agentic Workspace Supervisor
    Professional dark-first design system
    ======================================================================== */
 
@@ -350,56 +350,38 @@ button {
   -webkit-app-region: no-drag;
 }
 
-.sidebar-head-actions select {
-  font-size: 11px;
-  padding: 3px 6px;
-  background: transparent;
+.theme-toggle {
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
-  min-width: 0;
-  width: 62px;
+  border-radius: var(--radius-sm);
+}
+
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+#theme-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* --- New Workspace Form ----------------------------------------------- */
 .toolbar {
   padding: 0 var(--sp-3) var(--sp-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
+  display: block;
   flex-shrink: 0;
 }
 
-.toolbar .path-row {
-  display: flex;
-  gap: var(--sp-1);
-  align-items: center;
-}
-
-.toolbar .path-row input {
-  flex: 1;
-  min-width: 0;
-}
-
-.toolbar .path-row .btn-icon {
-  flex-shrink: 0;
-  font-size: 14px;
-}
-
-.toolbar .create-row {
-  display: flex;
-  gap: var(--sp-2);
-}
-
-.toolbar input {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  padding: 6px 10px;
-}
-
-#create-workspace {
-  flex-shrink: 0;
+.toolbar #workspace-add {
+  width: 100%;
+  justify-content: center;
 }
 
 /* --- Search & Filter -------------------------------------------------- */
@@ -1417,11 +1399,13 @@ button {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  background: var(--bg-surface);
 }
 
 .xterm-container .xterm {
   height: 100%;
-  padding: 4px;
+  padding: 0;
+  background: transparent;
 }
 
 /* Diagnostics filters */
@@ -1598,6 +1582,70 @@ pre {
   font-family: "Cascadia Code", "Consolas", monospace;
 }
 
+/* --- New Workspace Modal --------------------------------------------- */
+.workspace-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.workspace-modal-card {
+  width: min(520px, 92vw);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.workspace-modal-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.workspace-modal-body {
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.workspace-modal-path-row {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.workspace-modal-path-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-modal-path-row .btn-icon {
+  border: 1px solid var(--border-default);
+  background: transparent;
+}
+
+.workspace-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+}
+
 /* --- Utility Classes -------------------------------------------------- */
 .hidden {
   display: none !important;
@@ -1617,7 +1665,7 @@ label {
 .app-shell.sidebar-collapsed .workspace-list,
 .app-shell.sidebar-collapsed .panel-card,
 .app-shell.sidebar-collapsed .key-list,
-.app-shell.sidebar-collapsed #theme-select,
+.app-shell.sidebar-collapsed #theme-toggle,
 .app-shell.sidebar-collapsed .sidebar-sections {
   display: none;
 }

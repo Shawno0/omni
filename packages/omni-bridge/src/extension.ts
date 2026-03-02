@@ -29,7 +29,7 @@ class OmniBridgeProvider {
 
   public readonly model: vscode.LanguageModelChatInformation = {
     id: "omni-context-default",
-    name: "OmniContext BYOK",
+    name: "Omni BYOK",
     family: "omni",
     version: "0.1.0",
     maxInputTokens: 64_000,
@@ -37,8 +37,8 @@ class OmniBridgeProvider {
     capabilities: {
       toolCalling: true,
     },
-    detail: "BYOK bridge model routed through OmniContext provider keys",
-    tooltip: "OmniContext model bridge",
+    detail: "BYOK bridge model routed through Omni provider keys",
+    tooltip: "Omni model bridge",
   };
 
   public async sendChat(prompt: string): Promise<string> {

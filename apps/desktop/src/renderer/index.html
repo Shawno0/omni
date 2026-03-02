@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OmniContext</title>
+    <title>Omni</title>
     <link rel="stylesheet" href="../../../../node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
@@ -18,29 +18,19 @@
         <div class="sidebar-head">
           <div class="sidebar-title-block">
             <div class="sidebar-logo" aria-hidden="true">O</div>
-            <h1>OmniContext</h1>
+            <h1>Omni</h1>
             <p>Agentic Workspace Supervisor</p>
           </div>
           <div class="sidebar-head-actions">
-            <select id="theme-select" aria-label="Theme">
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-            <button id="sidebar-toggle" class="btn-icon" aria-label="Collapse sidebar" title="Toggle sidebar">⊟</button>
+            <button id="theme-toggle" class="theme-toggle" aria-label="Toggle theme" title="Theme: System">
+              <span id="theme-toggle-icon" aria-hidden="true"></span>
+            </button>
           </div>
         </div>
 
-        <!-- New Workspace Form -->
+        <!-- New Workspace -->
         <div class="toolbar">
-          <div class="path-row">
-            <input id="project-path" placeholder="Project path  (e.g. C:\src\my-app)" />
-            <button id="browse-path" class="btn-icon" aria-label="Browse for folder" title="Browse…">📂</button>
-          </div>
-          <div class="create-row">
-            <input id="workspace-name" placeholder="Session name (optional)" />
-            <button id="create-workspace" class="btn-primary">+ New</button>
-          </div>
+          <button id="workspace-add" class="btn-secondary">Workspace +</button>
         </div>
 
         <!-- Search & Filter -->
@@ -123,7 +113,7 @@
         <header class="workspace-header">
           <div style="display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag">
             <button id="workspace-sidebar-toggle" class="btn-icon" aria-label="Toggle sidebar" title="Toggle sidebar">☰</button>
-            <h2 id="workspace-title">OmniContext</h2>
+            <h2 id="workspace-title">Omni</h2>
           </div>
           <div class="workspace-header-actions" style="-webkit-app-region:no-drag">
             <div class="layout-switcher">
@@ -251,6 +241,37 @@
       </div>
     </div>
 
+    <!-- New Workspace Modal -->
+    <div id="workspace-modal-overlay" class="workspace-modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Create workspace">
+      <div class="workspace-modal-card">
+        <div class="workspace-modal-header">
+          <h3>New Workspace</h3>
+          <button id="workspace-modal-close" class="btn-icon" aria-label="Close new workspace modal" title="Close">✕</button>
+        </div>
+        <div class="workspace-modal-body">
+          <label>
+            Project Path
+            <div class="workspace-modal-path-row">
+              <input id="modal-project-path" placeholder="C:\src\my-app" />
+              <button id="modal-browse-path" class="btn-icon" aria-label="Browse for folder" title="Browse">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"></path>
+                </svg>
+              </button>
+            </div>
+          </label>
+          <label>
+            Session Name (optional)
+            <input id="modal-workspace-name" placeholder="my-project" />
+          </label>
+        </div>
+        <div class="workspace-modal-actions">
+          <button id="workspace-modal-cancel" class="ghost">Cancel</button>
+          <button id="workspace-modal-create" class="btn-primary">Create</button>
+        </div>
+      </div>
+    </div>
+
     <script src="../../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="./renderer.js" defer></script>
@@ -269,10 +290,10 @@
             return;
           }
 
-          const themeSelect = document.getElementById("theme-select");
-          const createButton = document.getElementById("create-workspace");
-          const pathInput = document.getElementById("project-path");
-          const nameInput = document.getElementById("workspace-name");
+          const themeToggle = document.getElementById("theme-toggle");
+          const createButton = document.getElementById("workspace-modal-create");
+          const pathInput = document.getElementById("modal-project-path");
+          const nameInput = document.getElementById("modal-workspace-name");
           const status = document.getElementById("workspace-status");
 
           const setStatus = (text, isError) => {
@@ -283,13 +304,14 @@
             status.classList.toggle("error", Boolean(isError));
           };
 
-          if (themeSelect) {
+          if (themeToggle) {
             const initial = localStorage.getItem("omni-theme") || "system";
-            themeSelect.value = initial;
             applyTheme(initial);
-            themeSelect.addEventListener("change", () => {
-              localStorage.setItem("omni-theme", themeSelect.value);
-              applyTheme(themeSelect.value);
+            themeToggle.addEventListener("click", () => {
+              const current = localStorage.getItem("omni-theme") || "system";
+              const next = current === "system" ? "light" : current === "light" ? "dark" : "system";
+              localStorage.setItem("omni-theme", next);
+              applyTheme(next);
               setStatus("Theme updated (fallback mode).", false);
             });
           }

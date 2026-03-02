@@ -1,10 +1,34 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
 out/
 coverage/
+*.tsbuildinfo
+
+# Logs
 *.log
-.DS_Store
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment/local config
+.env
+.env.*
+!.env.example
+
+# Editor/OS files
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local runtime state
 .omni/
+apps/desktop/vendor/_extract/
+apps/desktop/vendor/code-server-*.tgz
+
+# Internal planning/docs not required for build/runtime
 .plans/
 docs/
