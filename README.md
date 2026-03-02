@@ -7,8 +7,7 @@ It combines:
 - embedded code-server IDE sessions,
 - per-workspace preview/browser tabs,
 - per-workspace multi-terminal tabs,
-- persisted workspace/session state,
-- secure BYOK key storage for provider integrations.
+- persisted workspace/session state.
 
 ## Features
 
@@ -18,7 +17,6 @@ It combines:
 - Multi-terminal tabs per workspace (create, rename, switch, close)
 - Browser/preview tabs per workspace with persistence
 - Workspace activity monitoring (focused/background/idle + terminal progress)
-- Encrypted API key vault using Electron safe storage
 
 ## Tech Stack
 
@@ -32,7 +30,7 @@ It combines:
 
 - `apps/desktop` — Electron desktop app
 - `packages/shared` — shared contracts/types
-- `packages/omni-bridge` — VS Code extension package (BYOK bridge)
+- `packages/omni-bridge` — VS Code extension package
 
 ## Prerequisites
 
@@ -110,9 +108,10 @@ If not set, Omni uses the bundled runtime under `apps/desktop/vendor/code-server
 
 ## Security Notes
 
-- Provider keys are stored encrypted using Electron `safeStorage`.
-- Keys are injected into workspace process environments at launch time.
+- Workspace sessions are isolated and run with per-workspace partitions.
 
-## License
+## Preview
 
-No license is currently declared. Add a license file before publishing publicly if you intend open-source distribution.
+![dark mode / system](dark.png)
+
+![light mode](light.png)
