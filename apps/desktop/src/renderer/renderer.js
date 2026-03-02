@@ -57,6 +57,9 @@ window.__omniRendererInitialized = false;
     focusedTerminal: el("focused-terminal"),
     terminalContainer: el("terminal-container"),
     focusedTerminalContainer: el("focused-terminal-container"),
+    terminalTabs: el("terminal-tabs"),
+    terminalTabNew: el("terminal-tab-new"),
+    terminalTabRename: el("terminal-tab-rename"),
     previewRefresh: el("preview-refresh"),
     browserTabs: el("browser-tabs"),
     browserTabNew: el("browser-tab-new"),
@@ -158,8 +161,8 @@ window.__omniRendererInitialized = false;
       bottomTerm = b.term;
       bottomFit = b.fitAddon;
       bottomTerm.onData((data) => {
-        if (selectedWorkspaceId && api?.sendTerminalInput) {
-          api.sendTerminalInput(selectedWorkspaceId, data);
+        if (selectedWorkspaceId && activeTerminalId && api?.sendTerminalInput) {
+          api.sendTerminalInput(selectedWorkspaceId, activeTerminalId, data);
         }
       });
       // Write init diagnostics into the terminal so they're visible
@@ -176,8 +179,8 @@ window.__omniRendererInitialized = false;
       focusedTerm = f.term;
       focusedFit = f.fitAddon;
       focusedTerm.onData((data) => {
-        if (selectedWorkspaceId && api?.sendTerminalInput) {
-          api.sendTerminalInput(selectedWorkspaceId, data);
+        if (selectedWorkspaceId && activeTerminalId && api?.sendTerminalInput) {
+          api.sendTerminalInput(selectedWorkspaceId, activeTerminalId, data);
         }
       });
     }
@@ -201,8 +204,8 @@ window.__omniRendererInitialized = false;
     try { focusedFit?.fit(); } catch {}
     // Send resize to backend for whichever terminal is visible
     const activeTerm = layoutMode === "focused" && focusedSurface === "terminal" ? focusedTerm : bottomTerm;
-    if (activeTerm && selectedWorkspaceId && api?.resizeTerminal) {
-      api.resizeTerminal(selectedWorkspaceId, activeTerm.cols, activeTerm.rows);
+    if (activeTerm && selectedWorkspaceId && activeTerminalId && api?.resizeTerminal) {
+      api.resizeTerminal(selectedWorkspaceId, activeTerminalId, activeTerm.cols, activeTerm.rows);
     }
   };
 
@@ -218,7 +221,10 @@ window.__omniRendererInitialized = false;
   let pendingWorkspacesPayload = null;
   let workspacesUpdateTimer;
   let applyingWorkspaceUpdate = false;
-  let terminalSessionId;
+  let activeTerminalId;
+  let terminalTabs = [];
+  const terminalTabsByWorkspace = new Map();
+  const terminalBufferByKey = new Map();
   let ideRatio = Number(localStorage.getItem("omni-ide-ratio") || "50");
   let appPreviewRetryTimer = null;
   let appPreviewTargetSrc = null;
@@ -231,11 +237,14 @@ window.__omniRendererInitialized = false;
   let paletteShortcut = localStorage.getItem("omni-palette-key") || "k";
   let restartShortcut = localStorage.getItem("omni-restart-key") || "r";
 
+  const terminalBufferKey = (workspaceId, terminalId) => `${workspaceId}:${terminalId}`;
+
   /* ─── Helpers ─────────────────────────────────────────────────────── */
   const getSelectedWorkspace = () => workspaces.find((w) => w.id === selectedWorkspaceId);
 
   const buildSessionIdentityKey = (items) => items.map((w) => `${w.id}:${w.name}`).join("|");
-  const buildSessionSnapshotKey = (items) => items.map((w) => `${w.id}:${w.name}:${w.status}:${w.resourceTier}:${w.appPort || 0}`).join("|");
+  const buildSessionSnapshotKey = (items) =>
+    items.map((w) => `${w.id}:${w.name}:${w.status}:${w.resourceTier}:${w.terminalProgress || "idle"}:${w.appPort || 0}`).join("|");
 
   const setStatus = (text, isError = false) => {
     if (!elements.workspaceStatus) return;
@@ -259,6 +268,113 @@ window.__omniRendererInitialized = false;
 
   const getIdeThemeName = () =>
     getResolvedTheme() === "dark" ? "Default Dark Modern" : "Default Light Modern";
+
+  const persistIdeThemePreference = () => {
+    if (!api?.setIdeTheme) {
+      return;
+    }
+    const themeName = getIdeThemeName();
+    void api.setIdeTheme(themeName).catch(() => {});
+  };
+
+  const buildIdeSrc = (workspace, cacheBust = "") => {
+    if (!workspace?.projectPath || !workspace?.idePort) return "";
+    let folderPath = workspace.projectPath.replace(/\\/g, "/");
+    if (/^[A-Za-z]:/.test(folderPath)) folderPath = "/" + folderPath;
+    const ideTheme = getIdeThemeName();
+    const cacheParam = cacheBust ? `&omni-theme-sync=${encodeURIComponent(cacheBust)}` : "";
+    return (
+      `http://localhost:${workspace.idePort}/?folder=${encodeURIComponent(folderPath)}` +
+      `&vscode-theme=${encodeURIComponent(ideTheme)}` +
+      `&theme=${encodeURIComponent(ideTheme)}` +
+      cacheParam
+    );
+  };
+
+  const buildIdeThemeSyncScript = (isDark, themeName) => {
+    const rootClass = isDark ? "vs-dark" : "vs";
+    const vscodeClass = isDark ? "vscode-dark" : "vscode-light";
+    return `(() => {
+      try {
+        const removeClasses = ["vs", "vs-dark", "hc-black", "hc-light", "vscode-light", "vscode-dark", "vscode-high-contrast", "vscode-high-contrast-light"];
+        const targets = [document.documentElement, document.body, document.querySelector('.monaco-workbench')].filter(Boolean);
+        for (const target of targets) {
+          target.classList.remove(...removeClasses);
+          target.classList.add(${JSON.stringify(rootClass)}, ${JSON.stringify(vscodeClass)});
+        }
+        const styleId = "omni-theme-sync";
+        let style = document.getElementById(styleId);
+        if (!style) {
+          style = document.createElement("style");
+          style.id = styleId;
+          document.head.appendChild(style);
+        }
+        style.textContent = ${JSON.stringify(isDark ? ":root { color-scheme: dark; }" : ":root { color-scheme: light; }")};
+        try {
+          window.localStorage.setItem("workbench.colorTheme", ${JSON.stringify(themeName)});
+        } catch {}
+        try {
+          if (window.monaco && window.monaco.editor && typeof window.monaco.editor.setTheme === "function") {
+            window.monaco.editor.setTheme(${JSON.stringify(isDark ? "vs-dark" : "vs")});
+          }
+        } catch {}
+        return true;
+      } catch {
+        return false;
+      }
+    })();`;
+  };
+
+  const applyThemeToIdeFrame = (ideFrame) => {
+    if (!ideFrame || typeof ideFrame.executeJavaScript !== "function") return;
+    const isDark = getResolvedTheme() === "dark";
+    const script = buildIdeThemeSyncScript(isDark, getIdeThemeName());
+    ideFrame.executeJavaScript(script).catch(() => {});
+  };
+
+  const scheduleIdeThemeSync = (ideFrame) => {
+    applyThemeToIdeFrame(ideFrame);
+    [250, 1000, 2500].forEach((delay) => {
+      setTimeout(() => applyThemeToIdeFrame(ideFrame), delay);
+    });
+  };
+
+  const applyThemeToAllIdeFrames = () => {
+    wsFrames.forEach((ws) => applyThemeToIdeFrame(ws.ideFrame));
+  };
+
+  const rebuildIdeFramesForTheme = () => {
+    const token = String(Date.now());
+    wsFrames.forEach((state, workspaceId) => {
+      const workspace = workspaces.find((item) => item.id === workspaceId);
+      if (!workspace || !state?.ideFrame) return;
+
+      const previous = state.ideFrame;
+      const replacement = document.createElement("webview");
+      replacement.className = previous.className || "ws-ide-frame";
+      replacement.dataset.workspaceId = workspaceId;
+      replacement.setAttribute("partition", workspace.partition || `persist:session_${workspaceId}`);
+      replacement.setAttribute("allowpopups", "");
+      replacement.title = previous.title || "IDE";
+
+      replacement.addEventListener("dom-ready", () => {
+        scheduleIdeThemeSync(replacement);
+      });
+
+      const nextSrc = buildIdeSrc(workspace, token);
+      if (nextSrc) {
+        replacement.src = nextSrc;
+        state.ideSrc = nextSrc;
+      }
+
+      if (previous.classList.contains("active")) {
+        replacement.classList.add("active");
+      }
+
+      previous.replaceWith(replacement);
+      state.ideFrame = replacement;
+    });
+  };
 
   /** Sync xterm terminal theme with the resolved app theme. */
   const updateTerminalTheme = () => {
@@ -557,7 +673,7 @@ window.__omniRendererInitialized = false;
     elements.activityDiagnostics.textContent = activityEvents.slice(0, 30).map((ev) => {
       const t = new Date(ev.sampledAt).toLocaleTimeString();
       const cpu = Number(ev.cpuPercent || 0).toFixed(1);
-      return `${t}  tier=${ev.tier}  cpu=${cpu}%  terminal=${ev.terminalActive ? "on" : "off"}`;
+      return `${t}  tier=${ev.tier}  cpu=${cpu}%  terminal=${ev.terminalActive ? "on" : "off"}  progress=${ev.terminalProgress || "idle"}`;
     }).join("\n");
   };
 
@@ -586,7 +702,7 @@ window.__omniRendererInitialized = false;
   const showPreviewLoading = (port) => {
     const frame = getActivePreviewFrame();
     if (!frame) return;
-    switchBrowserTab("preview");
+    switchBrowserTab("preview", { persist: false });
     const loadingHtml = `<!doctype html><html><head><style>
       body { margin:0; display:flex; align-items:center; justify-content:center; height:100vh;
              font:14px system-ui; color:#9d9d9d; background:#1f1f1f; flex-direction:column; gap:12px; }
@@ -649,6 +765,9 @@ window.__omniRendererInitialized = false;
     ideFrame.setAttribute("partition", partition);
     ideFrame.setAttribute("allowpopups", "");
     ideFrame.title = "IDE";
+    ideFrame.addEventListener("dom-ready", () => {
+      scheduleIdeThemeSync(ideFrame);
+    });
     elements.ideFrameContent?.appendChild(ideFrame);
 
     // Create preview webview
@@ -661,14 +780,47 @@ window.__omniRendererInitialized = false;
     previewFrame.title = "App Preview";
     elements.browserTabContent?.appendChild(previewFrame);
 
+    const persistedTabs = Array.isArray(workspace?.browserTabs)
+      ? workspace.browserTabs
+          .filter((tab) => tab && typeof tab.id === "string" && typeof tab.label === "string")
+          .map((tab) => ({
+            id: tab.id,
+            label: tab.label,
+            closable: Boolean(tab.closable),
+            ...(typeof tab.url === "string" ? { url: tab.url } : {}),
+          }))
+      : [{ id: "preview", label: "Preview", closable: false }];
+
+    const tabs = persistedTabs.some((tab) => tab.id === "preview")
+      ? persistedTabs.map((tab) => (tab.id === "preview" ? { ...tab, closable: false } : tab))
+      : [{ id: "preview", label: "Preview", closable: false }, ...persistedTabs];
+
+    for (const tab of tabs) {
+      if (tab.id === "preview") continue;
+      const wv = document.createElement("webview");
+      wv.className = "surface-frame browser-frame";
+      wv.dataset.tabId = tab.id;
+      wv.dataset.workspaceId = wsId;
+      wv.setAttribute("partition", partition);
+      wv.setAttribute("allowpopups", "");
+      wv.title = tab.label;
+      if (tab.url) {
+        wv.src = tab.url;
+      }
+      elements.browserTabContent?.appendChild(wv);
+    }
+
+    const persistedActive = typeof workspace?.activeBrowserTab === "string" ? workspace.activeBrowserTab : "preview";
+    const activeTab = tabs.some((tab) => tab.id === persistedActive) ? persistedActive : "preview";
+
     const state = {
       ideFrame,
       ideSrc: undefined,
       previewFrame,
       appSrc: undefined,
       usingSrcDoc: false,
-      tabs: [{ id: "preview", label: "Preview", closable: false }],
-      activeTab: "preview",
+      tabs,
+      activeTab,
     };
     wsFrames.set(wsId, state);
     return state;
@@ -689,6 +841,40 @@ window.__omniRendererInitialized = false;
 
   const getTabButton = (tabId) =>
     elements.browserTabs?.querySelector(`.browser-tab[data-tab-id="${tabId}"]`);
+
+  const snapshotBrowserTabs = (workspaceId) => {
+    const tabs = browserTabs.map((tab) => {
+      if (tab.id === "preview") {
+        return {
+          id: tab.id,
+          label: tab.label,
+          closable: false,
+        };
+      }
+
+      const frame = elements.browserTabContent?.querySelector(
+        `webview[data-workspace-id="${workspaceId}"][data-tab-id="${tab.id}"]`,
+      );
+      const currentUrl = frame?.getURL?.() || frame?.src || tab.url;
+      return {
+        id: tab.id,
+        label: tab.label,
+        closable: Boolean(tab.closable),
+        ...(currentUrl ? { url: currentUrl } : {}),
+      };
+    });
+
+    return tabs;
+  };
+
+  const persistBrowserTabState = (workspaceId = selectedWorkspaceId) => {
+    if (!workspaceId || !api?.setBrowserState) {
+      return;
+    }
+
+    const tabsSnapshot = snapshotBrowserTabs(workspaceId);
+    void api.setBrowserState(workspaceId, tabsSnapshot, activeBrowserTab || "preview");
+  };
 
   const renderBrowserTabBar = () => {
     if (!elements.browserTabs) return;
@@ -717,7 +903,7 @@ window.__omniRendererInitialized = false;
     }
   };
 
-  const switchBrowserTab = (tabId) => {
+  const switchBrowserTab = (tabId, options = { persist: true }) => {
     activeBrowserTab = tabId;
     const wsId = selectedWorkspaceId;
 
@@ -739,6 +925,10 @@ window.__omniRendererInitialized = false;
       const src = iframe?.src || iframe?.getURL?.() || "";
       elements.browserAddressInput.value = src.startsWith("about:") || src.startsWith("data:") ? "" : src;
       elements.browserAddressInput.focus();
+    }
+
+    if (options.persist) {
+      persistBrowserTabState();
     }
   };
 
@@ -765,6 +955,7 @@ window.__omniRendererInitialized = false;
 
     renderBrowserTabBar();
     switchBrowserTab(tabId);
+    persistBrowserTabState();
     return tabId;
   };
 
@@ -782,6 +973,7 @@ window.__omniRendererInitialized = false;
     }
 
     renderBrowserTabBar();
+    persistBrowserTabState();
   };
 
   const navigateBrowserTab = (tabId, rawUrl) => {
@@ -798,6 +990,156 @@ window.__omniRendererInitialized = false;
       try { tab.label = new URL(url).hostname || url; } catch { tab.label = url; }
     }
     renderBrowserTabBar();
+    persistBrowserTabState();
+  };
+
+  /* ─── Terminal Tabs ──────────────────────────────────────────────── */
+  const applyTerminalBufferToViews = () => {
+    bottomTerm?.reset();
+    focusedTerm?.reset();
+    if (!selectedWorkspaceId || !activeTerminalId) {
+      return;
+    }
+
+    const key = terminalBufferKey(selectedWorkspaceId, activeTerminalId);
+    const buffered = terminalBufferByKey.get(key);
+    if (buffered) {
+      bottomTerm?.write(buffered);
+      focusedTerm?.write(buffered);
+    }
+  };
+
+  const rememberTerminalSnapshot = (workspaceId, payload) => {
+    const tabs = Array.isArray(payload?.terminals) ? payload.terminals : [];
+    const nextActive = payload?.activeTerminalId;
+    terminalTabsByWorkspace.set(workspaceId, {
+      terminals: tabs,
+      activeTerminalId: nextActive,
+    });
+
+    if (workspaceId === selectedWorkspaceId) {
+      terminalTabs = tabs;
+      activeTerminalId = nextActive;
+    }
+  };
+
+  const renderTerminalTabBar = () => {
+    if (!elements.terminalTabs) return;
+    elements.terminalTabs.innerHTML = "";
+
+    for (const tab of terminalTabs) {
+      const btn = document.createElement("button");
+      btn.className = `terminal-tab${tab.id === activeTerminalId ? " active" : ""}`;
+      btn.dataset.terminalId = tab.id;
+      btn.title = tab.name;
+
+      const label = document.createElement("span");
+      label.className = "terminal-tab-label";
+      label.textContent = tab.name;
+      btn.appendChild(label);
+
+      const close = document.createElement("span");
+      close.className = "terminal-tab-close";
+      close.textContent = "\u00d7";
+      close.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void closeTerminalTab(tab.id);
+      });
+      btn.appendChild(close);
+
+      btn.addEventListener("click", () => {
+        if (tab.id !== activeTerminalId) {
+          void switchTerminalTab(tab.id);
+        }
+      });
+      btn.addEventListener("dblclick", () => {
+        if (tab.id === activeTerminalId) {
+          void renameActiveTerminalTab();
+        }
+      });
+
+      elements.terminalTabs.appendChild(btn);
+    }
+
+    if (elements.terminalTabRename) {
+      elements.terminalTabRename.disabled = !activeTerminalId;
+    }
+  };
+
+  const ensureTerminalTabsForWorkspace = async (workspaceId) => {
+    if (!api?.listTerminals) return;
+
+    let snapshot = await api.listTerminals(workspaceId);
+    if (!snapshot || !Array.isArray(snapshot.terminals) || snapshot.terminals.length === 0) {
+      snapshot = await api.createTerminal(workspaceId);
+    }
+
+    rememberTerminalSnapshot(workspaceId, snapshot);
+    if (workspaceId === selectedWorkspaceId) {
+      renderTerminalTabBar();
+      applyTerminalBufferToViews();
+    }
+
+    if (snapshot?.activeTerminalId && api?.startTerminal) {
+      await api.startTerminal(workspaceId, snapshot.activeTerminalId);
+    }
+  };
+
+  const switchTerminalTab = async (terminalId) => {
+    if (!selectedWorkspaceId || !terminalId || !api?.setActiveTerminal) return;
+    const snapshot = await api.setActiveTerminal(selectedWorkspaceId, terminalId);
+    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
+    renderTerminalTabBar();
+    applyTerminalBufferToViews();
+    requestAnimationFrame(() => fitAllTerminals());
+  };
+
+  const createTerminalTab = async () => {
+    if (!selectedWorkspaceId || !api?.createTerminal) return;
+    const snapshot = await api.createTerminal(selectedWorkspaceId);
+    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
+    renderTerminalTabBar();
+    applyTerminalBufferToViews();
+    requestAnimationFrame(() => fitAllTerminals());
+  };
+
+  const renameActiveTerminalTab = async () => {
+    if (!selectedWorkspaceId || !activeTerminalId || !api?.renameTerminal) return;
+    const active = terminalTabs.find((tab) => tab.id === activeTerminalId);
+    const nextName = await showPrompt("Rename terminal:", active?.name || "");
+    if (nextName === null) {
+      return;
+    }
+
+    const normalized = String(nextName).trim();
+    if (!normalized) {
+      return;
+    }
+
+    const snapshot = await api.renameTerminal(selectedWorkspaceId, activeTerminalId, normalized);
+    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
+    renderTerminalTabBar();
+  };
+
+  const closeTerminalTab = async (terminalId) => {
+    if (!selectedWorkspaceId || !terminalId || !api?.closeTerminal) return;
+    const snapshot = await api.closeTerminal(selectedWorkspaceId, terminalId);
+    rememberTerminalSnapshot(selectedWorkspaceId, snapshot);
+    renderTerminalTabBar();
+    applyTerminalBufferToViews();
+    if (activeTerminalId) {
+      await api.startTerminal(selectedWorkspaceId, activeTerminalId);
+    }
+    requestAnimationFrame(() => fitAllTerminals());
+  };
+
+  const bindTerminalTabs = () => {
+    elements.terminalTabNew?.addEventListener("click", () => {
+      void createTerminalTab();
+    });
+    elements.terminalTabRename?.addEventListener("click", () => {
+      void renameActiveTerminalTab();
+    });
   };
 
   const bindBrowserTabs = () => {
@@ -862,7 +1204,9 @@ window.__omniRendererInitialized = false;
       elements.browserAddressBar?.classList.add("hidden");
 
       terminalWorkspaceId = undefined;
-      terminalSessionId = undefined;
+      activeTerminalId = undefined;
+      terminalTabs = [];
+      renderTerminalTabBar();
       bottomTerm?.reset();
       focusedTerm?.reset();
       if (elements.workspaceTitle) elements.workspaceTitle.textContent = "OmniContext";
@@ -870,7 +1214,10 @@ window.__omniRendererInitialized = false;
       return;
     }
 
-    setStatus(`${selected.name} \u2022 ${selected.status} \u2022 ${selected.resourceTier}`);
+    const terminalMarker = selected.terminalProgress && selected.terminalProgress !== "idle"
+      ? ` \u2022 terminal:${selected.terminalProgress}`
+      : "";
+    setStatus(`${selected.name} \u2022 ${selected.status} \u2022 ${selected.resourceTier}${terminalMarker}`);
     elements.workspaceGrid?.classList.remove("hidden");
     updateEmptyState(true);
 
@@ -890,6 +1237,7 @@ window.__omniRendererInitialized = false;
         prev.activeTab = activeBrowserTab;
         prev.ideFrame.classList.remove("active");
       }
+      persistBrowserTabState(terminalWorkspaceId);
 
       // Terminal reset
       bottomTerm?.reset();
@@ -901,6 +1249,16 @@ window.__omniRendererInitialized = false;
       renderBrowserTabBar();
 
       terminalWorkspaceId = selected.id;
+
+      const terminalSnapshot = terminalTabsByWorkspace.get(selected.id);
+      if (terminalSnapshot) {
+        terminalTabs = terminalSnapshot.terminals;
+        activeTerminalId = terminalSnapshot.activeTerminalId;
+      } else {
+        terminalTabs = [];
+        activeTerminalId = undefined;
+      }
+      renderTerminalTabBar();
     }
 
     // --- IDE Frame ---
@@ -908,16 +1266,16 @@ window.__omniRendererInitialized = false;
       f.classList.toggle("active", f.dataset.workspaceId === selected.id);
     });
 
-    let folderPath = selected.projectPath.replace(/\\/g, "/");
-    if (/^[A-Za-z]:/.test(folderPath)) folderPath = "/" + folderPath;
-    const nextIdeSrc = `http://localhost:${selected.idePort}/?folder=${encodeURIComponent(folderPath)}&vscode-theme=${encodeURIComponent(getIdeThemeName())}`;
+    const nextIdeSrc = buildIdeSrc(selected);
     if (ws.ideSrc !== nextIdeSrc) {
       ws.ideFrame.src = nextIdeSrc;
       ws.ideSrc = nextIdeSrc;
+    } else {
+      applyThemeToIdeFrame(ws.ideFrame);
     }
 
     // --- Browser Tabs / Preview ---
-    switchBrowserTab(activeBrowserTab);
+    switchBrowserTab(activeBrowserTab, { persist: false });
 
     const nextAppSrc = selected.appPort
       ? `http://localhost:${selected.appPort}`
@@ -939,9 +1297,9 @@ window.__omniRendererInitialized = false;
     }
 
     // --- Terminal ---
-    if (terminalSessionId !== selected.id && api?.startTerminal) {
-      await api.startTerminal(selected.id);
-      terminalSessionId = selected.id;
+    await ensureTerminalTabsForWorkspace(selected.id);
+    applyTerminalBufferToViews();
+    if (activeTerminalId) {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => fitAllTerminals());
       });
@@ -1030,6 +1388,13 @@ window.__omniRendererInitialized = false;
       tierBadge.className = `badge ${workspace.resourceTier || "idle"}`;
       tierBadge.textContent = workspace.resourceTier || "idle";
       meta.append(tierBadge);
+
+      if (workspace.terminalProgress && workspace.terminalProgress !== "idle") {
+        const terminalBadge = document.createElement("span");
+        terminalBadge.className = `badge ${workspace.terminalProgress}`;
+        terminalBadge.textContent = workspace.terminalProgress;
+        meta.append(terminalBadge);
+      }
 
       if (workspace.appPort) {
         const portBadge = document.createElement("span");
@@ -1509,19 +1874,20 @@ window.__omniRendererInitialized = false;
       elements.themeSelect.addEventListener("change", () => {
         localStorage.setItem("omni-theme", elements.themeSelect.value);
         applyTheme(elements.themeSelect.value);
+        persistIdeThemePreference();
         // Sync terminal + IDE themes
         updateTerminalTheme();
-        // Force IDE reload with new theme
-        wsFrames.forEach((ws) => { ws.ideSrc = undefined; });
-        void renderWorkspaceSurface();
+        rebuildIdeFramesForTheme();
+        applyThemeToAllIdeFrames();
       });
     }
 
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
       if (currentTheme !== "system") return;
+      persistIdeThemePreference();
       updateTerminalTheme();
-      wsFrames.forEach((ws) => { ws.ideSrc = undefined; });
-      void renderWorkspaceSurface();
+      rebuildIdeFramesForTheme();
+      applyThemeToAllIdeFrames();
     });
 
     updateSidebarState();
@@ -1532,6 +1898,7 @@ window.__omniRendererInitialized = false;
     bindPanelCardToggles();
     bindBottomPanelTabs();
     bindBrowserTabs();
+    bindTerminalTabs();
 
     bindQuickActions();
     bindBYOK();
@@ -1608,6 +1975,7 @@ window.__omniRendererInitialized = false;
     try { initTerminals(); } catch (e) { console.warn("xterm init failed:", e); }
     // Apply correct terminal theme based on current settings
     updateTerminalTheme();
+    persistIdeThemePreference();
     window.addEventListener("resize", () => fitAllTerminals());
     // Observe bottom panel resizes for terminal fit
     const bottomPanel = document.querySelector(".bottom-panel");
@@ -1621,8 +1989,12 @@ window.__omniRendererInitialized = false;
       scheduleWorkspaceUpdateFlush();
     });
 
-    api.onTerminalData((workspaceId, data) => {
-      if (workspaceId !== selectedWorkspaceId) return;
+    api.onTerminalData((workspaceId, terminalId, data) => {
+      const key = terminalBufferKey(workspaceId, terminalId);
+      const existing = terminalBufferByKey.get(key) || "";
+      terminalBufferByKey.set(key, existing + data);
+
+      if (workspaceId !== selectedWorkspaceId || terminalId !== activeTerminalId) return;
       bottomTerm?.write(data);
       focusedTerm?.write(data);
     });

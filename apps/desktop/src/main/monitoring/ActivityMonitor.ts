@@ -11,6 +11,7 @@ export interface ActivityMonitorOptions {
     cpuPercent: number;
     tier: WorkspaceInfo["resourceTier"];
     terminalActive: boolean;
+    terminalProgress: WorkspaceInfo["terminalProgress"];
     agentLock: boolean;
     sampledAt: number;
   }) => void;
@@ -51,6 +52,7 @@ export class ActivityMonitor {
         cpuPercent,
         tier,
         terminalActive: workspace.terminalActive,
+        terminalProgress: workspace.terminalProgress,
         agentLock: workspace.agentLock,
         sampledAt: Date.now(),
       });
@@ -86,7 +88,12 @@ export class ActivityMonitor {
       return "focused";
     }
 
-    const active = cpuPercent > 1 || workspace.terminalActive || workspace.agentLock;
+    const active =
+      cpuPercent > 1 ||
+      workspace.terminalActive ||
+      workspace.terminalProgress === "working" ||
+      workspace.terminalProgress === "completed" ||
+      workspace.agentLock;
     if (active) {
       return "background-active";
     }

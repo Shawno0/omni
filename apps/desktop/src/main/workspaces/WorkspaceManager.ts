@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -14,10 +15,15 @@ import {
 import { createPartitionForWorkspace } from "../isolation/partitionFactory.js";
 import { createSessionToken, createWorkspaceId } from "../utils/id.js";
 import { allocatePort } from "../utils/ports.js";
-import type { WorkspaceCreateInput, WorkspaceInfo } from "../types.js";
-import type { PersistedWorkspace } from "../state/SessionStore.js";
+import type { BrowserTabState, WorkspaceCreateInput, WorkspaceInfo } from "../types.js";
+import type { PersistedBrowserTab, PersistedTerminalSession, PersistedWorkspace } from "../state/SessionStore.js";
 
 const require = createRequire(import.meta.url);
+const DEFAULT_BROWSER_TAB: BrowserTabState = {
+  id: "preview",
+  label: "Preview",
+  closable: false,
+};
 
 interface WorkspaceRuntime {
   process: ChildProcessWithoutNullStreams | null;
@@ -26,19 +32,54 @@ interface WorkspaceRuntime {
 
 interface WorkspaceManagerOptions {
   onProcessOutput?: (workspaceId: string, stream: "stdout" | "stderr", chunk: string) => void;
-  onTerminalOutput?: (workspaceId: string, data: string) => void;
+  onTerminalOutput?: (workspaceId: string, terminalId: string, data: string) => void;
+}
+
+export interface TerminalSessionInfo {
+  id: string;
+  name: string;
+  createdAt: number;
 }
 
 interface TerminalRuntime {
   pty: import("node-pty").IPty | null;
+  info: TerminalSessionInfo;
+}
+
+interface WorkspaceTerminalState {
+  activeTerminalId: string | undefined;
+  terminals: Map<string, TerminalRuntime>;
+  order: string[];
+  counter: number;
 }
 
 export class WorkspaceManager {
   private readonly workspaces = new Map<string, WorkspaceInfo>();
   private readonly runtimes = new Map<string, WorkspaceRuntime>();
-  private readonly terminals = new Map<string, TerminalRuntime>();
+  private readonly terminals = new Map<string, WorkspaceTerminalState>();
+  private codeServerUserDataRoot = path.join(process.cwd(), ".omni", "code-server-user-data");
+  private preferredIdeTheme = "Default Dark Modern";
 
   public constructor(private readonly options: WorkspaceManagerOptions = {}) {}
+
+  public setCodeServerUserDataRoot(rootPath: string): void {
+    const normalized = rootPath.trim();
+    if (!normalized) {
+      return;
+    }
+    this.codeServerUserDataRoot = normalized;
+  }
+
+  public setIdeTheme(themeName: string): void {
+    const normalized = themeName.trim();
+    if (!normalized) {
+      return;
+    }
+    this.preferredIdeTheme = normalized;
+    for (const workspace of this.workspaces.values()) {
+      this.writeWorkspaceThemeSettings(workspace.id);
+    }
+  }
 
   public list(): WorkspaceInfo[] {
     return Array.from(this.workspaces.values()).sort((left, right) => left.name.localeCompare(right.name));
@@ -71,13 +112,20 @@ export class WorkspaceManager {
       startedAt: undefined,
       lastError: undefined,
       terminalActive: false,
+      terminalProgress: "idle",
       agentLock: false,
       resourceTier: "idle",
+      browserTabs: [
+        {
+          ...DEFAULT_BROWSER_TAB,
+        },
+      ],
+      activeBrowserTab: "preview",
     };
 
     this.workspaces.set(id, workspace);
     this.runtimes.set(id, { logs: [], process: null });
-    this.terminals.set(id, { pty: null });
+    this.terminals.set(id, this.createTerminalState());
 
     return workspace;
   }
@@ -103,27 +151,48 @@ export class WorkspaceManager {
       startedAt: undefined,
       lastError: undefined,
       terminalActive: false,
+      terminalProgress: "idle",
       agentLock: false,
       resourceTier: "idle",
+      browserTabs: this.normalizeBrowserTabs(persisted.browserTabs),
+      activeBrowserTab: this.resolveActiveBrowserTab(persisted.activeBrowserTab, persisted.browserTabs),
     };
 
     this.workspaces.set(workspace.id, workspace);
     this.runtimes.set(workspace.id, { logs: [], process: null });
-    this.terminals.set(workspace.id, { pty: null });
+    this.terminals.set(workspace.id, this.createTerminalState(persisted));
     return workspace;
   }
 
   public toPersistedState(): PersistedWorkspace[] {
-    return this.list().map((workspace) => ({
-      id: workspace.id,
-      name: workspace.name,
-      slug: workspace.slug,
-      projectPath: workspace.projectPath,
-      idePort: workspace.idePort,
-      appPort: workspace.appPort,
-      token: workspace.token,
-      createdAt: workspace.startedAt ?? Date.now(),
-    }));
+    return this.list().map((workspace) => {
+      const terminalState = this.getTerminalState(workspace.id);
+      const activeTerminalId = this.getActiveTerminal(workspace.id)?.id;
+      return {
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+        projectPath: workspace.projectPath,
+        idePort: workspace.idePort,
+        appPort: workspace.appPort,
+        token: workspace.token,
+        createdAt: workspace.startedAt ?? Date.now(),
+        terminalSessions: this.listTerminals(workspace.id).map((session) => ({
+          id: session.id,
+          name: session.name,
+          createdAt: session.createdAt,
+        })),
+        terminalCounter: terminalState.counter,
+        browserTabs: workspace.browserTabs.map((tab) => ({
+          id: tab.id,
+          label: tab.label,
+          closable: tab.closable,
+          ...(tab.url ? { url: tab.url } : {}),
+        })),
+        activeBrowserTab: workspace.activeBrowserTab,
+        ...(activeTerminalId ? { activeTerminalId } : {}),
+      };
+    });
   }
 
   public async start(workspaceId: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<WorkspaceInfo> {
@@ -133,12 +202,15 @@ export class WorkspaceManager {
     }
 
     const launch = this.resolveCodeServerLaunch();
+    this.writeWorkspaceThemeSettings(workspace.id);
     const args = [
       ...launch.prefixArgs,
       "--bind-addr",
       `127.0.0.1:${workspace.idePort}`,
       "--auth",
       "none",
+      "--user-data-dir",
+      this.getCodeServerUserDataDir(workspace.id),
       workspace.projectPath,
     ];
 
@@ -216,15 +288,15 @@ export class WorkspaceManager {
   public stop(workspaceId: string): WorkspaceInfo {
     const workspace = this.mustGet(workspaceId);
     const runtime = this.runtimes.get(workspaceId);
-    const terminal = this.terminals.get(workspaceId);
+    const terminalState = this.terminals.get(workspaceId);
 
     runtime?.process?.kill();
-    terminal?.pty?.kill();
+    for (const terminal of terminalState?.terminals.values() ?? []) {
+      terminal.pty?.kill();
+      terminal.pty = null;
+    }
     if (runtime) {
       runtime.process = null;
-    }
-    if (terminal) {
-      terminal.pty = null;
     }
 
     workspace.status = "stopped";
@@ -236,24 +308,103 @@ export class WorkspaceManager {
 
   public dispose(workspaceId: string): void {
     const runtime = this.runtimes.get(workspaceId);
-    const terminal = this.terminals.get(workspaceId);
+    const terminalState = this.terminals.get(workspaceId);
     runtime?.process?.kill();
-    terminal?.pty?.kill();
+    for (const terminal of terminalState?.terminals.values() ?? []) {
+      terminal.pty?.kill();
+      terminal.pty = null;
+    }
 
     this.workspaces.delete(workspaceId);
     this.runtimes.delete(workspaceId);
     this.terminals.delete(workspaceId);
   }
 
-  public startTerminal(workspaceId: string): void {
-    const workspace = this.mustGet(workspaceId);
-    const terminal = this.terminals.get(workspaceId) ?? { pty: null };
+  public listTerminals(workspaceId: string): TerminalSessionInfo[] {
+    const state = this.getTerminalState(workspaceId);
+    return state.order
+      .map((terminalId) => state.terminals.get(terminalId)?.info)
+      .filter((info): info is TerminalSessionInfo => Boolean(info));
+  }
 
-    if (terminal.pty) {
-      return;
+  public getActiveTerminal(workspaceId: string): TerminalSessionInfo | undefined {
+    const state = this.getTerminalState(workspaceId);
+    if (!state.activeTerminalId) {
+      return undefined;
+    }
+    return state.terminals.get(state.activeTerminalId)?.info;
+  }
+
+  public createTerminal(workspaceId: string, name?: string): TerminalSessionInfo {
+    this.mustGet(workspaceId);
+    const state = this.getTerminalState(workspaceId);
+    const runtime = this.createTerminalRuntime(state, name);
+    state.terminals.set(runtime.info.id, runtime);
+    state.order.push(runtime.info.id);
+    state.activeTerminalId = runtime.info.id;
+    return runtime.info;
+  }
+
+  public renameTerminal(workspaceId: string, terminalId: string, name: string): TerminalSessionInfo {
+    this.mustGet(workspaceId);
+    const state = this.getTerminalState(workspaceId);
+    const runtime = this.getTerminalRuntime(state, terminalId);
+    const normalized = name.trim();
+    runtime.info.name = normalized.length > 0 ? normalized : runtime.info.name;
+    return runtime.info;
+  }
+
+  public setActiveTerminal(workspaceId: string, terminalId: string): TerminalSessionInfo {
+    this.mustGet(workspaceId);
+    const state = this.getTerminalState(workspaceId);
+    const runtime = this.getTerminalRuntime(state, terminalId);
+    state.activeTerminalId = runtime.info.id;
+    return runtime.info;
+  }
+
+  public closeTerminal(workspaceId: string, terminalId: string): TerminalSessionInfo[] {
+    this.mustGet(workspaceId);
+    const state = this.getTerminalState(workspaceId);
+    const runtime = this.getTerminalRuntime(state, terminalId);
+
+    runtime.pty?.kill();
+    runtime.pty = null;
+    state.terminals.delete(terminalId);
+    state.order = state.order.filter((id) => id !== terminalId);
+
+    if (state.activeTerminalId === terminalId) {
+      state.activeTerminalId = state.order[state.order.length - 1];
     }
 
-    const emit = (msg: string) => this.options.onTerminalOutput?.(workspace.id, msg);
+    if (state.order.length === 0) {
+      const replacement = this.createTerminalRuntime(state);
+      state.terminals.set(replacement.info.id, replacement);
+      state.order.push(replacement.info.id);
+      state.activeTerminalId = replacement.info.id;
+    }
+
+    return this.listTerminals(workspaceId);
+  }
+
+  public startTerminal(workspaceId: string, terminalId?: string): TerminalSessionInfo {
+    const workspace = this.mustGet(workspaceId);
+    const state = this.getTerminalState(workspaceId);
+    if (!terminalId) {
+      terminalId = state.activeTerminalId;
+    }
+    if (!terminalId) {
+      const created = this.createTerminal(workspaceId);
+      terminalId = created.id;
+    }
+
+    const terminal = this.getTerminalRuntime(state, terminalId);
+    state.activeTerminalId = terminalId;
+
+    if (terminal.pty) {
+      return terminal.info;
+    }
+
+    const emit = (msg: string) => this.options.onTerminalOutput?.(workspace.id, terminal.info.id, msg);
 
     try {
       emit("\x1b[90m[omni] Loading node-pty...\x1b[0m\r\n");
@@ -282,27 +433,31 @@ export class WorkspaceManager {
       });
 
       ptyProcess.onExit(() => {
-        const runtime = this.terminals.get(workspace.id);
+        const terminalState = this.terminals.get(workspace.id);
+        const runtime = terminalState?.terminals.get(terminal.info.id);
         if (runtime) {
           runtime.pty = null;
         }
       });
 
       terminal.pty = ptyProcess;
-      this.terminals.set(workspace.id, terminal);
+      state.terminals.set(terminal.info.id, terminal);
     } catch (error) {
       const message = error instanceof Error ? error.stack ?? error.message : "Unknown error starting terminal";
       emit(`\x1b[31m[omni] Failed to start terminal:\r\n${message}\x1b[0m\r\n`);
     }
+
+    return terminal.info;
   }
 
-  public sendTerminalInput(workspaceId: string, data: string): void {
-    const terminal = this.terminals.get(workspaceId);
+  public sendTerminalInput(workspaceId: string, terminalId: string, data: string): void {
+    const state = this.getTerminalState(workspaceId);
+    const terminal = state.terminals.get(terminalId);
     if (!terminal?.pty) {
-      this.startTerminal(workspaceId);
+      this.startTerminal(workspaceId, terminalId);
     }
 
-    const runtime = this.terminals.get(workspaceId);
+    const runtime = state.terminals.get(terminalId);
     if (!runtime?.pty) {
       throw new Error("Terminal is not available for this workspace");
     }
@@ -310,8 +465,9 @@ export class WorkspaceManager {
     runtime.pty.write(data);
   }
 
-  public resizeTerminal(workspaceId: string, cols: number, rows: number): void {
-    const terminal = this.terminals.get(workspaceId);
+  public resizeTerminal(workspaceId: string, terminalId: string, cols: number, rows: number): void {
+    const state = this.getTerminalState(workspaceId);
+    const terminal = state.terminals.get(terminalId);
     if (terminal?.pty) {
       terminal.pty.resize(cols, rows);
     }
@@ -332,6 +488,28 @@ export class WorkspaceManager {
   public setTerminalActivity(workspaceId: string, active: boolean): WorkspaceInfo {
     const workspace = this.mustGet(workspaceId);
     workspace.terminalActive = active;
+    return workspace;
+  }
+
+  public setTerminalProgress(workspaceId: string, progress: WorkspaceInfo["terminalProgress"]): WorkspaceInfo {
+    const workspace = this.mustGet(workspaceId);
+    workspace.terminalProgress = progress;
+    return workspace;
+  }
+
+  public acknowledgeTerminalProgress(workspaceId: string): WorkspaceInfo {
+    const workspace = this.mustGet(workspaceId);
+    if (workspace.terminalProgress === "completed") {
+      workspace.terminalProgress = "idle";
+    }
+    return workspace;
+  }
+
+  public setBrowserState(workspaceId: string, browserTabs: BrowserTabState[], activeBrowserTab: string): WorkspaceInfo {
+    const workspace = this.mustGet(workspaceId);
+    const normalizedTabs = this.normalizeBrowserTabs(browserTabs);
+    workspace.browserTabs = normalizedTabs;
+    workspace.activeBrowserTab = this.resolveActiveBrowserTab(activeBrowserTab, normalizedTabs);
     return workspace;
   }
 
@@ -496,5 +674,165 @@ export class WorkspaceManager {
 
     const command = process.env.SHELL || "bash";
     return { command, args: [] };
+  }
+
+  private getCodeServerUserDataDir(workspaceId: string): string {
+    return path.join(this.codeServerUserDataRoot, workspaceId);
+  }
+
+  private writeWorkspaceThemeSettings(workspaceId: string): void {
+    try {
+      const userDataDir = this.getCodeServerUserDataDir(workspaceId);
+      const userSettingsDir = path.join(userDataDir, "User");
+      const settingsPath = path.join(userSettingsDir, "settings.json");
+      fs.mkdirSync(userSettingsDir, { recursive: true });
+
+      let settings: Record<string, unknown> = {};
+      if (fs.existsSync(settingsPath)) {
+        try {
+          const content = fs.readFileSync(settingsPath, "utf8");
+          const parsed = JSON.parse(content) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            settings = parsed as Record<string, unknown>;
+          }
+        } catch {
+          settings = {};
+        }
+      }
+
+      settings["workbench.colorTheme"] = this.preferredIdeTheme;
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf8");
+    } catch {
+      // Best-effort settings sync only.
+    }
+  }
+
+  private getTerminalState(workspaceId: string): WorkspaceTerminalState {
+    const state = this.terminals.get(workspaceId);
+    if (!state) {
+      throw new Error(`Terminal state not found for workspace ${workspaceId}`);
+    }
+
+    return state;
+  }
+
+  private getTerminalRuntime(state: WorkspaceTerminalState, terminalId: string): TerminalRuntime {
+    const runtime = state.terminals.get(terminalId);
+    if (!runtime) {
+      throw new Error(`Terminal not found: ${terminalId}`);
+    }
+
+    return runtime;
+  }
+
+  private createTerminalRuntime(state: WorkspaceTerminalState, name?: string): TerminalRuntime {
+    state.counter += 1;
+    const resolvedName = name?.trim() || `Terminal ${state.counter}`;
+    return {
+      pty: null,
+      info: {
+        id: crypto.randomUUID(),
+        name: resolvedName,
+        createdAt: Date.now(),
+      },
+    };
+  }
+
+  private createTerminalState(persisted?: PersistedWorkspace): WorkspaceTerminalState {
+    const state: WorkspaceTerminalState = {
+      activeTerminalId: undefined,
+      terminals: new Map(),
+      order: [],
+      counter: 0,
+    };
+
+    const persistedCounter = persisted?.terminalCounter;
+    if (typeof persistedCounter === "number" && Number.isFinite(persistedCounter) && persistedCounter > 0) {
+      state.counter = Math.floor(persistedCounter);
+    }
+
+    const sessions = persisted?.terminalSessions ?? [];
+    for (const session of sessions) {
+      if (!this.isValidPersistedTerminal(session)) {
+        continue;
+      }
+
+      const runtime: TerminalRuntime = {
+        pty: null,
+        info: {
+          id: session.id,
+          name: session.name,
+          createdAt: session.createdAt,
+        },
+      };
+
+      if (state.terminals.has(runtime.info.id)) {
+        continue;
+      }
+
+      state.terminals.set(runtime.info.id, runtime);
+      state.order.push(runtime.info.id);
+    }
+
+    if (persisted?.activeTerminalId && state.terminals.has(persisted.activeTerminalId)) {
+      state.activeTerminalId = persisted.activeTerminalId;
+    } else if (state.order.length > 0) {
+      state.activeTerminalId = state.order[state.order.length - 1];
+    }
+
+    return state;
+  }
+
+  private isValidPersistedTerminal(session: PersistedTerminalSession): boolean {
+    return (
+      typeof session.id === "string" &&
+      session.id.length > 0 &&
+      typeof session.name === "string" &&
+      session.name.trim().length > 0 &&
+      typeof session.createdAt === "number"
+    );
+  }
+
+  private normalizeBrowserTabs(tabs: PersistedBrowserTab[] | BrowserTabState[] | undefined): BrowserTabState[] {
+    const normalized: BrowserTabState[] = [];
+
+    for (const tab of tabs ?? []) {
+      if (!tab || typeof tab.id !== "string" || typeof tab.label !== "string" || typeof tab.closable !== "boolean") {
+        continue;
+      }
+      const cleanId = tab.id.trim();
+      const cleanLabel = tab.label.trim();
+      if (!cleanId || !cleanLabel) {
+        continue;
+      }
+
+      if (normalized.some((existing) => existing.id === cleanId)) {
+        continue;
+      }
+
+      normalized.push({
+        id: cleanId,
+        label: cleanLabel,
+        closable: cleanId === "preview" ? false : tab.closable,
+        ...(typeof tab.url === "string" && tab.url.trim().length > 0 ? { url: tab.url } : {}),
+      });
+    }
+
+    if (!normalized.some((tab) => tab.id === "preview")) {
+      normalized.unshift({
+        ...DEFAULT_BROWSER_TAB,
+      });
+    }
+
+    return normalized;
+  }
+
+  private resolveActiveBrowserTab(activeBrowserTab: string | undefined, tabs: PersistedBrowserTab[] | BrowserTabState[] | undefined): string {
+    const normalized = this.normalizeBrowserTabs(tabs);
+    if (activeBrowserTab && normalized.some((tab) => tab.id === activeBrowserTab)) {
+      return activeBrowserTab;
+    }
+
+    return "preview";
   }
 }

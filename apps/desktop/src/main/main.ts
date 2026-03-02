@@ -10,12 +10,21 @@ import { PTYHeartbeatServer } from "./monitoring/PTYHeartbeatServer.js";
 import { KeyVault } from "./security/KeyVault.js";
 import { SessionStore } from "./state/SessionStore.js";
 import type { WorkspaceCreateInput, WorkspaceInfo } from "./types.js";
+import type { TerminalSessionInfo } from "./workspaces/WorkspaceManager.js";
 
 
 const ptyActivityBridge = new PTYActivityBridge({
   onTerminalActivity: (workspaceId, active) => {
     try {
       workspaceManager.setTerminalActivity(workspaceId, active);
+      broadcastWorkspaceUpdate();
+    } catch {
+      // Workspace may have been disposed before bridge update.
+    }
+  },
+  onTerminalProgress: (workspaceId, progress) => {
+    try {
+      workspaceManager.setTerminalProgress(workspaceId, progress);
       broadcastWorkspaceUpdate();
     } catch {
       // Workspace may have been disposed before bridge update.
@@ -30,14 +39,23 @@ function safeSend(channel: string, ...args: unknown[]): void {
   }
 }
 
+function getTerminalSnapshot(workspaceId: string): {
+  terminals: TerminalSessionInfo[];
+  activeTerminalId: string | undefined;
+} {
+  return {
+    terminals: workspaceManager.listTerminals(workspaceId),
+    activeTerminalId: workspaceManager.getActiveTerminal(workspaceId)?.id,
+  };
+}
+
 const workspaceManager = new WorkspaceManager({
   onProcessOutput: (workspaceId, stream, chunk) => {
-    ptyActivityBridge.recordOutput(workspaceId);
     safeSend("workspace:log", workspaceId, stream, chunk);
   },
-  onTerminalOutput: (workspaceId, data) => {
+  onTerminalOutput: (workspaceId, terminalId, data) => {
     ptyActivityBridge.recordOutput(workspaceId);
-    safeSend("workspace:terminal:data", workspaceId, data);
+    safeSend("workspace:terminal:data", workspaceId, terminalId, data);
   },
 });
 const ptyHeartbeatServer = new PTYHeartbeatServer({
@@ -70,6 +88,7 @@ const activityTimelineByWorkspace = new Map<string, Array<{
   cpuPercent: number;
   tier: "focused" | "background-active" | "idle";
   terminalActive: boolean;
+  terminalProgress: "idle" | "working" | "completed";
   agentLock: boolean;
 }>>();
 
@@ -108,7 +127,7 @@ async function persistWorkspaceState(): Promise<void> {
     }
   }
   await sessionStore.save({
-    version: 1,
+    version: 2,
     focusedWorkspaceId,
     workspaces,
   });
@@ -119,6 +138,7 @@ function getActivityTimeline(workspaceId?: string, limit = 40): Array<{
   cpuPercent: number;
   tier: "focused" | "background-active" | "idle";
   terminalActive: boolean;
+  terminalProgress: "idle" | "working" | "completed";
   agentLock: boolean;
 }> {
   if (!workspaceId) {
@@ -339,6 +359,7 @@ function registerIpc(): void {
       }
     }
     focusedWorkspaceId = workspaceId;
+    workspaceManager.acknowledgeTerminalProgress(workspaceId);
     // Immediately promote the newly focused workspace
     try {
       workspaceManager.setResourceTier(workspaceId, "focused");
@@ -372,6 +393,7 @@ function registerIpc(): void {
       }
     }
     focusedWorkspaceId = workspace.id;
+    workspaceManager.acknowledgeTerminalProgress(workspace.id);
     workspaceManager.setResourceTier(workspaceId, "focused");
     broadcastWorkspaceUpdate();
     safeSend("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
@@ -406,6 +428,22 @@ function registerIpc(): void {
     return workspace;
   });
 
+  ipcMain.handle("workspace:ideTheme:set", async (_event, themeName: string) => {
+    workspaceManager.setIdeTheme(themeName);
+    await persistWorkspaceState();
+    return true;
+  });
+
+  ipcMain.handle(
+    "workspace:browserState:set",
+    async (_event, workspaceId: string, browserTabs: Array<{ id: string; label: string; url?: string; closable: boolean }>, activeBrowserTab: string) => {
+      const workspace = workspaceManager.setBrowserState(workspaceId, browserTabs, activeBrowserTab);
+      broadcastWorkspaceUpdate();
+      await persistWorkspaceState();
+      return workspace;
+    },
+  );
+
   ipcMain.handle("workspace:setAgentLock", async (_event, workspaceId: string, locked: boolean) => {
     const workspace = workspaceManager.setAgentLock(workspaceId, locked);
     broadcastWorkspaceUpdate();
@@ -424,8 +462,50 @@ function registerIpc(): void {
     ptyActivityBridge.recordOutput(workspaceId);
   });
 
-  ipcMain.handle("workspace:terminal:start", (_event, workspaceId: string) => {
-    workspaceManager.startTerminal(workspaceId);
+  ipcMain.handle("workspace:terminal:start", (_event, workspaceId: string, terminalId?: string) => {
+    const terminal = workspaceManager.startTerminal(workspaceId, terminalId);
+    return {
+      terminal,
+      ...getTerminalSnapshot(workspaceId),
+    };
+  });
+
+  ipcMain.handle("workspace:terminal:list", (_event, workspaceId: string) => {
+    return getTerminalSnapshot(workspaceId);
+  });
+
+  ipcMain.handle("workspace:terminal:create", (_event, workspaceId: string, name?: string) => {
+    const terminal = workspaceManager.createTerminal(workspaceId, name);
+    workspaceManager.startTerminal(workspaceId, terminal.id);
+    return {
+      terminal,
+      ...getTerminalSnapshot(workspaceId),
+    };
+  });
+
+  ipcMain.handle("workspace:terminal:rename", (_event, workspaceId: string, terminalId: string, name: string) => {
+    const terminal = workspaceManager.renameTerminal(workspaceId, terminalId, name);
+    return {
+      terminal,
+      ...getTerminalSnapshot(workspaceId),
+    };
+  });
+
+  ipcMain.handle("workspace:terminal:setActive", (_event, workspaceId: string, terminalId: string) => {
+    const terminal = workspaceManager.setActiveTerminal(workspaceId, terminalId);
+    workspaceManager.startTerminal(workspaceId, terminal.id);
+    return {
+      terminal,
+      ...getTerminalSnapshot(workspaceId),
+    };
+  });
+
+  ipcMain.handle("workspace:terminal:close", (_event, workspaceId: string, terminalId: string) => {
+    const terminals = workspaceManager.closeTerminal(workspaceId, terminalId);
+    return {
+      terminals,
+      activeTerminalId: workspaceManager.getActiveTerminal(workspaceId)?.id,
+    };
   });
 
   ipcMain.handle("devtools:toggle", () => {
@@ -438,12 +518,12 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle("workspace:terminal:input", (_event, workspaceId: string, data: string) => {
-    workspaceManager.sendTerminalInput(workspaceId, data);
+  ipcMain.handle("workspace:terminal:input", (_event, workspaceId: string, terminalId: string, data: string) => {
+    workspaceManager.sendTerminalInput(workspaceId, terminalId, data);
   });
 
-  ipcMain.handle("workspace:terminal:resize", (_event, workspaceId: string, cols: number, rows: number) => {
-    workspaceManager.resizeTerminal(workspaceId, cols, rows);
+  ipcMain.handle("workspace:terminal:resize", (_event, workspaceId: string, terminalId: string, cols: number, rows: number) => {
+    workspaceManager.resizeTerminal(workspaceId, terminalId, cols, rows);
   });
 
   ipcMain.handle("keys:list", async () => keyVault.list());
@@ -528,6 +608,7 @@ async function bootstrap(): Promise<void> {
   });
 
   await app.whenReady();
+  workspaceManager.setCodeServerUserDataRoot(path.join(app.getPath("userData"), "code-server-user-data"));
   keyVault = new KeyVault();
   sessionStore = new SessionStore();
   ptyHeartbeatEndpoint = await ptyHeartbeatServer.start();

@@ -538,6 +538,14 @@ button {
   background: var(--yellow-muted);
   color: var(--yellow);
 }
+.badge.working {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.badge.completed {
+  background: var(--green-muted);
+  color: var(--green);
+}
 .badge.starting {
   background: var(--accent-muted);
   color: var(--accent);
@@ -1296,6 +1304,112 @@ button {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+}
+
+.terminal-tab-bar {
+  display: flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 30px;
+}
+
+.terminal-tabs {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  scrollbar-width: none;
+}
+.terminal-tabs::-webkit-scrollbar { display: none; }
+
+.terminal-tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  height: 30px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 180px;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.terminal-tab:hover { background: var(--bg-raised); color: var(--text-secondary); }
+.terminal-tab.active {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--accent);
+}
+
+.terminal-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.terminal-tab:hover .terminal-tab-close,
+.terminal-tab.active .terminal-tab-close { opacity: 1; }
+.terminal-tab-close:hover { background: var(--bg-raised); color: var(--text-primary); }
+
+.terminal-tab-new,
+.terminal-tab-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 30px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.terminal-tab-new {
+  font-size: 16px;
+  font-weight: 300;
+}
+
+.terminal-tab-action {
+  font-size: 14px;
+}
+
+.terminal-tab-new:hover,
+.terminal-tab-action:hover {
+  color: var(--text-primary);
+}
+
+.terminal-tab-action:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* xterm container */

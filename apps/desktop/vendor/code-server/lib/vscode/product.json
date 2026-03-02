@@ -86,6 +86,7 @@
   "defaultChatAgent": {
     "extensionId": "GitHub.copilot",
     "chatExtensionId": "GitHub.copilot-chat",
+    "chatExtensionOutputId": "GitHub.copilot-chat.GitHub Copilot Chat.log",
     "documentationUrl": "https://aka.ms/github-copilot-overview",
     "termsStatementUrl": "https://aka.ms/github-copilot-terms-statement",
     "privacyStatementUrl": "https://aka.ms/github-copilot-privacy-statement",
@@ -141,7 +142,9 @@
     "resolveMergeConflictsCommand": "github.copilot.git.resolveMergeConflicts",
     "completionsAdvancedSetting": "github.copilot.advanced",
     "completionsEnablementSetting": "github.copilot.enable",
-    "nextEditSuggestionsSetting": "github.copilot.nextEditSuggestions.enabled"
+    "nextEditSuggestionsSetting": "github.copilot.nextEditSuggestions.enabled",
+    "tokenEntitlementUrl": "https://api.github.com/copilot_internal/v2/token",
+    "mcpRegistryDataUrl": "https://api.github.com/copilot/mcp_registry"
   },
   "trustedExtensionAuthAccess": [
     "vscode.git",
@@ -152,7 +155,7 @@
   ],
   "enableTelemetry": true,
   "quality": "stable",
-  "codeServerVersion": "4.108.2",
+  "codeServerVersion": "4.109.2",
   "documentationUrl": "https://go.microsoft.com/fwlink/?LinkID=533484#vscode",
   "keyboardShortcutsUrlMac": "https://go.microsoft.com/fwlink/?linkid=832143",
   "keyboardShortcutsUrlLinux": "https://go.microsoft.com/fwlink/?linkid=832144",
@@ -166,7 +169,7 @@
   "aiConfig": {
     "ariaKey": "code-server"
   },
-  "commit": "3c0b449c6e6e37b44a8a7938c0d8a3049926a64c",
-  "date": "2026-01-26T20:52:05.876Z",
-  "version": "1.108.2"
+  "commit": "9184b645cc7aa41b750e2f2ef956f2896512dd84",
+  "date": "2026-02-11T18:00:45.918Z",
+  "version": "1.109.2"
 }

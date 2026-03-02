@@ -1,3 +1,9 @@
+/**
+ * IMPORTANT:
+ * This CommonJS preload bridge is the runtime-loaded entrypoint.
+ * `apps/desktop/src/preload/preload.ts` is the typed source reference.
+ * Any API added/changed/removed in either file MUST be mirrored in the other.
+ */
 const { contextBridge, ipcRenderer } = require("electron");
 
 const omniAPI = {
@@ -12,12 +18,25 @@ const omniAPI = {
   stopWorkspace: (workspaceId) => ipcRenderer.invoke("workspace:stop", workspaceId),
   disposeWorkspace: (workspaceId) => ipcRenderer.invoke("workspace:dispose", workspaceId),
   setAppPort: (workspaceId, appPort) => ipcRenderer.invoke("workspace:setAppPort", workspaceId, appPort),
+  setIdeTheme: (themeName) => ipcRenderer.invoke("workspace:ideTheme:set", themeName),
+  setBrowserState: (workspaceId, browserTabs, activeBrowserTab) =>
+    ipcRenderer.invoke("workspace:browserState:set", workspaceId, browserTabs, activeBrowserTab),
   setAgentLock: (workspaceId, locked) => ipcRenderer.invoke("workspace:setAgentLock", workspaceId, locked),
   setTerminalActivity: (workspaceId, active) => ipcRenderer.invoke("workspace:setTerminalActivity", workspaceId, active),
   reportPtyOutput: (workspaceId) => ipcRenderer.invoke("workspace:ptyOutput", workspaceId),
-  startTerminal: (workspaceId) => ipcRenderer.invoke("workspace:terminal:start", workspaceId),
-  sendTerminalInput: (workspaceId, data) => ipcRenderer.invoke("workspace:terminal:input", workspaceId, data),
-  resizeTerminal: (workspaceId, cols, rows) => ipcRenderer.invoke("workspace:terminal:resize", workspaceId, cols, rows),
+  startTerminal: (workspaceId, terminalId) => ipcRenderer.invoke("workspace:terminal:start", workspaceId, terminalId),
+  listTerminals: (workspaceId) => ipcRenderer.invoke("workspace:terminal:list", workspaceId),
+  createTerminal: (workspaceId, name) => ipcRenderer.invoke("workspace:terminal:create", workspaceId, name),
+  renameTerminal: (workspaceId, terminalId, name) =>
+    ipcRenderer.invoke("workspace:terminal:rename", workspaceId, terminalId, name),
+  setActiveTerminal: (workspaceId, terminalId) =>
+    ipcRenderer.invoke("workspace:terminal:setActive", workspaceId, terminalId),
+  closeTerminal: (workspaceId, terminalId) =>
+    ipcRenderer.invoke("workspace:terminal:close", workspaceId, terminalId),
+  sendTerminalInput: (workspaceId, terminalId, data) =>
+    ipcRenderer.invoke("workspace:terminal:input", workspaceId, terminalId, data),
+  resizeTerminal: (workspaceId, terminalId, cols, rows) =>
+    ipcRenderer.invoke("workspace:terminal:resize", workspaceId, terminalId, cols, rows),
   listKeys: () => ipcRenderer.invoke("keys:list"),
   listProtocolDiagnostics: (limit) => ipcRenderer.invoke("diagnostics:protocol:list", limit),
   listRestoreDiagnostics: (limit) => ipcRenderer.invoke("diagnostics:restore:list", limit),
@@ -39,7 +58,7 @@ const omniAPI = {
   },
   onTerminalData: (listener) => {
     const eventName = "workspace:terminal:data";
-    const wrapped = (_event, workspaceId, data) => listener(workspaceId, data);
+    const wrapped = (_event, workspaceId, terminalId, data) => listener(workspaceId, terminalId, data);
     ipcRenderer.on(eventName, wrapped);
     return () => ipcRenderer.removeListener(eventName, wrapped);
   },

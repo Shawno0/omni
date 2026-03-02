@@ -1,4 +1,12 @@
 export type ResourceTier = "focused" | "background-active" | "idle";
+export type TerminalProgress = "idle" | "working" | "completed";
+
+export interface BrowserTabState {
+  id: string;
+  label: string;
+  url?: string;
+  closable: boolean;
+}
 
 export interface WorkspaceDescriptor {
   id: string;
@@ -17,6 +25,9 @@ export interface WorkspaceDescriptor {
   resourceTier: ResourceTier;
   agentLock: boolean;
   terminalActive: boolean;
+  terminalProgress: TerminalProgress;
+  browserTabs: BrowserTabState[];
+  activeBrowserTab: string;
 }
 
 export interface ActivitySnapshot {

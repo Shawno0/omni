@@ -29,6 +29,12 @@ npm run dev
 ## Environment Variables
 - `OMNI_CODE_SERVER_BIN` (optional): path to `code-server` executable.
 
+## code-server Runtime Updates
+- `apps/desktop` now checks npm for the latest `code-server` during `build` and `typecheck`.
+- If a newer version is available, the bundled runtime under `apps/desktop/vendor/code-server` is updated automatically.
+- If npm version lookup fails (offline/registry issue), it falls back to the script's pinned baseline version.
+- Manual refresh is available from repo root with `npm run update:code-server`.
+
 ## Companion Plans
 - `.plans/implementation-plan.md`
 - `.plans/ui-ux-guidelines.md`

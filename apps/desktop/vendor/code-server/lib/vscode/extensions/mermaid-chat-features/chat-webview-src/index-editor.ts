@@ -9,16 +9,17 @@ declare function acquireVsCodeApi(): VsCodeApi;
 const vscode = acquireVsCodeApi();
 
 
-async function main() {
-	await initializeMermaidWebview(vscode);
-
-	// Set up the "Open in Editor" button
-	const openBtn = document.querySelector('.open-in-editor-btn');
-	if (openBtn) {
-		openBtn.addEventListener('click', e => {
-			e.stopPropagation();
-			vscode.postMessage({ type: 'openInEditor' });
-		});
+initializeMermaidWebview(vscode).then(panZoomHandler => {
+	if (!panZoomHandler) {
+		return;
 	}
-}
-main();
+
+	// Wire up zoom controls
+	const zoomInBtn = document.querySelector('.zoom-in-btn');
+	const zoomOutBtn = document.querySelector('.zoom-out-btn');
+	const zoomResetBtn = document.querySelector('.zoom-reset-btn');
+
+	zoomInBtn?.addEventListener('click', () => panZoomHandler.zoomIn());
+	zoomOutBtn?.addEventListener('click', () => panZoomHandler.zoomOut());
+	zoomResetBtn?.addEventListener('click', () => panZoomHandler.reset());
+});
