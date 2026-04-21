@@ -2,6 +2,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
+import { IpcChannels, AI_PROVIDERS, AI_PROVIDER_META, type AiProvider, type OmniErrorRecord, type RestoreDiagnosticEvent } from "@omni/shared";
 import { WorkspaceManager } from "./workspaces/WorkspaceManager.js";
 import { ProtocolInterceptor } from "./network/ProtocolInterceptor.js";
 import { ActivityMonitor } from "./monitoring/ActivityMonitor.js";
@@ -9,6 +10,8 @@ import { PTYActivityBridge } from "./monitoring/PTYActivityBridge.js";
 import { PTYHeartbeatServer } from "./monitoring/PTYHeartbeatServer.js";
 import { KeyVault } from "./security/KeyVault.js";
 import { SessionStore } from "./state/SessionStore.js";
+import { VibeOverlayManager } from "./vibe/VibeOverlayManager.js";
+import { logger } from "./diagnostics/Logger.js";
 import type { WorkspaceCreateInput, WorkspaceInfo } from "./types.js";
 import type { TerminalSessionInfo } from "./workspaces/WorkspaceManager.js";
 
@@ -17,7 +20,7 @@ const ptyActivityBridge = new PTYActivityBridge({
   onTerminalActivity: (workspaceId, active) => {
     try {
       workspaceManager.setTerminalActivity(workspaceId, active);
-      broadcastWorkspaceUpdate();
+      broadcastWorkspacePatch(workspaceId);
     } catch {
       // Workspace may have been disposed before bridge update.
     }
@@ -25,7 +28,7 @@ const ptyActivityBridge = new PTYActivityBridge({
   onTerminalProgress: (workspaceId, progress) => {
     try {
       workspaceManager.setTerminalProgress(workspaceId, progress);
-      broadcastWorkspaceUpdate();
+      broadcastWorkspacePatch(workspaceId);
     } catch {
       // Workspace may have been disposed before bridge update.
     }
@@ -51,11 +54,11 @@ function getTerminalSnapshot(workspaceId: string): {
 
 const workspaceManager = new WorkspaceManager({
   onProcessOutput: (workspaceId, stream, chunk) => {
-    safeSend("workspace:log", workspaceId, stream, chunk);
+    safeSend(IpcChannels.EventWorkspaceLog, workspaceId, stream, chunk);
   },
   onTerminalOutput: (workspaceId, terminalId, data) => {
     ptyActivityBridge.recordOutput(workspaceId);
-    safeSend("workspace:terminal:data", workspaceId, terminalId, data);
+    safeSend(IpcChannels.EventTerminalData, workspaceId, terminalId, data);
   },
 });
 const ptyHeartbeatServer = new PTYHeartbeatServer({
@@ -74,15 +77,12 @@ const protocolInterceptor = new ProtocolInterceptor();
 let keyVault: KeyVault;
 let sessionStore: SessionStore;
 let shellWindow: BrowserWindow | undefined;
+let vibeOverlay: VibeOverlayManager | undefined;
 let focusedWorkspaceId: string | undefined;
 let ptyHeartbeatEndpoint: string | undefined;
-const restoreDiagnostics: Array<{
-  at: number;
-  workspaceId: string;
-  workspaceName: string;
-  status: "restored" | "failed";
-  message: string;
-}> = [];
+/** Partitions that have already had the protocol handler installed. */
+const registeredPartitions = new Set<string>();
+const restoreDiagnostics: RestoreDiagnosticEvent[] = [];
 const activityTimelineByWorkspace = new Map<string, Array<{
   sampledAt: number;
   cpuPercent: number;
@@ -97,7 +97,7 @@ const activityMonitor = new ActivityMonitor({
   getFocusedWorkspaceId: () => focusedWorkspaceId,
   onTierChange: (workspaceId, tier) => {
     workspaceManager.setResourceTier(workspaceId, tier);
-    broadcastWorkspaceUpdate();
+    broadcastWorkspacePatch(workspaceId);
   },
   onSample: (sample) => {
     const bucket = activityTimelineByWorkspace.get(sample.workspaceId) ?? [];
@@ -106,9 +106,25 @@ const activityMonitor = new ActivityMonitor({
       bucket.shift();
     }
     activityTimelineByWorkspace.set(sample.workspaceId, bucket);
-    safeSend("diagnostics:activity:updated", sample.workspaceId, bucket.slice(-40).reverse());
+    safeSend(IpcChannels.EventActivityDiagnosticsUpdated, sample.workspaceId, bucket.slice(-40).reverse());
   },
 });
+
+/**
+ * Install the Omni HTTP protocol handler on a workspace's partition session
+ * and strip embedding-blocking headers. Previously only the header stripper
+ * was wired in main.ts, so the `.ide` / `.local` virtual hosts were never
+ * routed — webviews would fail to resolve their URLs. `ensureRegistered()`
+ * is idempotent, so calling it on every start/restore/create is safe.
+ */
+function ensureWorkspaceNetwork(workspace: WorkspaceInfo): void {
+  const partitionSession = session.fromPartition(workspace.partition);
+  stripEmbeddingHeaders(partitionSession);
+  if (!registeredPartitions.has(workspace.partition)) {
+    protocolInterceptor.ensureRegistered(partitionSession, workspace.partition, () => workspaceManager.list());
+    registeredPartitions.add(workspace.partition);
+  }
+}
 
 async function persistWorkspaceState(): Promise<void> {
   const workspaces = workspaceManager.toPersistedState();
@@ -228,11 +244,38 @@ function createShellWindow(): BrowserWindow {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
+      // Disable the preload sandbox so `require("@omni/shared")` and other
+      // workspace-hoisted modules resolve through Node's normal walk-up
+      // algorithm. Electron's sandboxed preload uses a restricted resolver
+      // that only sees a small allowlist + relative paths, which breaks our
+      // pnpm/npm workspace symlinks. Renderer isolation is still enforced by
+      // contextIsolation + nodeIntegration:false; the preload simply runs in
+      // a full Node context (same trust boundary as main).
+      sandbox: false,
       webviewTag: true,
     },
   });
 
   void window.loadFile(rendererPath);
+
+  // Auto-open DevTools in development (unpackaged) builds so renderer
+  // errors are immediately visible during spot-checks.
+  if (!app.isPackaged) {
+    window.webContents.once("did-finish-load", () => {
+      try {
+        window.webContents.openDevTools({ mode: "right" });
+      } catch {
+        /* noop */
+      }
+    });
+    window.webContents.on("console-message", (_event, level, message, line, source) => {
+      // level: 0=verbose 1=info 2=warning 3=error
+      if (level >= 2) {
+        // eslint-disable-next-line no-console
+        console.log(`[renderer ${level === 3 ? "error" : "warn"}] ${message} (${source}:${line})`);
+      }
+    });
+  }
 
   // Handle popups from webview and shell window content.
   app.on("web-contents-created", (_event, contents) => {
@@ -282,11 +325,29 @@ function createShellWindow(): BrowserWindow {
 }
 
 function broadcastWorkspaceUpdate(): void {
-  safeSend("workspaces:updated", workspaceManager.list());
+  safeSend(IpcChannels.EventWorkspacesUpdated, workspaceManager.list());
+}
+
+/**
+ * Emit a per-workspace patch for hot paths that touch a single workspace
+ * (tier change, terminal activity, agent lock, app port, browser state).
+ * Renderer merges the patch into its local list rather than replacing,
+ * which avoids O(n) IPC serialization on every sample tick.
+ * Structural changes (create/dispose/restore) MUST still call
+ * `broadcastWorkspaceUpdate()` so the renderer stays authoritative.
+ */
+function broadcastWorkspacePatch(workspaceId: string): void {
+  const workspace = workspaceManager.get(workspaceId);
+  if (!workspace) return;
+  safeSend(IpcChannels.EventWorkspacePatch, workspace);
+}
+
+function broadcastErrors(events: OmniErrorRecord[]): void {
+  safeSend(IpcChannels.EventErrorsUpdated, events);
 }
 
 function registerIpc(): void {
-  ipcMain.handle("dialog:openFolder", async () => {
+  ipcMain.handle(IpcChannels.DialogOpenFolder, async () => {
     if (!shellWindow || shellWindow.isDestroyed()) return null;
     const result = await dialog.showOpenDialog(shellWindow, {
       properties: ["openDirectory"],
@@ -296,63 +357,67 @@ function registerIpc(): void {
     return result.filePaths[0];
   });
 
-  ipcMain.handle("workspace:list", () => workspaceManager.list());
-  ipcMain.handle("workspace:logs:list", (_event, workspaceId: string, limit?: number) =>
+  ipcMain.handle(IpcChannels.WorkspaceList, () => workspaceManager.list());
+  ipcMain.handle(IpcChannels.WorkspaceLogsList, (_event, workspaceId: string, limit?: number) =>
     workspaceManager.listLogs(workspaceId, limit),
   );
-  ipcMain.handle("diagnostics:protocol:list", (_event, limit?: number) => protocolInterceptor.getDiagnostics(limit));
-  ipcMain.handle("diagnostics:restore:list", (_event, limit?: number) =>
+  ipcMain.handle(IpcChannels.DiagnosticsProtocolList, (_event, limit?: number) => protocolInterceptor.getDiagnostics(limit));
+  ipcMain.handle(IpcChannels.DiagnosticsRestoreList, (_event, limit?: number) =>
     restoreDiagnostics.slice(-Math.max(1, limit ?? 60)).reverse(),
   );
-  ipcMain.handle("diagnostics:activity:list", (_event, workspaceId?: string, limit?: number) =>
+  ipcMain.handle(IpcChannels.DiagnosticsActivityList, (_event, workspaceId?: string, limit?: number) =>
     getActivityTimeline(workspaceId, limit),
   );
+  ipcMain.handle(IpcChannels.DiagnosticsErrorsList, (_event, limit?: number) => logger.list(limit ?? 60));
 
-  ipcMain.handle("workspace:create", async (_event, input: WorkspaceCreateInput) => {
-    const workspace = workspaceManager.create(input);
+  ipcMain.handle(IpcChannels.WorkspaceCreate, async (_event, input: WorkspaceCreateInput) => {
+    try {
+      const workspace = workspaceManager.create(input);
+      ensureWorkspaceNetwork(workspace);
 
-    const partitionSession = session.fromPartition(workspace.partition);
-    stripEmbeddingHeaders(partitionSession);
+      const started = await startWorkspaceWithProviderEnv(workspace.id);
 
-    const started = await startWorkspaceWithProviderEnv(workspace.id);
-
-    broadcastWorkspaceUpdate();
-    await persistWorkspaceState();
-    return started;
-  });
-
-  ipcMain.handle("workspace:start", async (_event, workspaceId: string) => {
-    const workspace = workspaceManager.get(workspaceId);
-    if (!workspace) {
-      throw new Error("Workspace not found");
+      broadcastWorkspaceUpdate();
+      await persistWorkspaceState();
+      return started;
+    } catch (err) {
+      logger.error("workspace:create", "Failed to create workspace", err);
+      throw err;
     }
-
-    const partitionSession = session.fromPartition(workspace.partition);
-    stripEmbeddingHeaders(partitionSession);
-
-    const started = await startWorkspaceWithProviderEnv(workspace.id);
-    broadcastWorkspaceUpdate();
-    await persistWorkspaceState();
-    return started;
   });
 
-  ipcMain.handle("workspace:restart", async (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.WorkspaceStart, async (_event, workspaceId: string) => {
+    const workspace = workspaceManager.get(workspaceId);
+    if (!workspace) throw new Error("Workspace not found");
+    try {
+      ensureWorkspaceNetwork(workspace);
+      const started = await startWorkspaceWithProviderEnv(workspace.id);
+      broadcastWorkspaceUpdate();
+      await persistWorkspaceState();
+      return started;
+    } catch (err) {
+      logger.error("workspace:start", `Failed to start ${workspace.slug}`, err);
+      throw err;
+    }
+  });
+
+  ipcMain.handle(IpcChannels.WorkspaceRestart, async (_event, workspaceId: string) => {
     workspaceManager.stop(workspaceId);
     const workspace = workspaceManager.get(workspaceId);
-    if (!workspace) {
-      throw new Error("Workspace not found");
+    if (!workspace) throw new Error("Workspace not found");
+    try {
+      ensureWorkspaceNetwork(workspace);
+      const restarted = await startWorkspaceWithProviderEnv(workspace.id);
+      broadcastWorkspaceUpdate();
+      await persistWorkspaceState();
+      return restarted;
+    } catch (err) {
+      logger.error("workspace:restart", `Failed to restart ${workspace.slug}`, err);
+      throw err;
     }
-
-    const partitionSession = session.fromPartition(workspace.partition);
-    stripEmbeddingHeaders(partitionSession);
-
-    const restarted = await startWorkspaceWithProviderEnv(workspace.id);
-    broadcastWorkspaceUpdate();
-    await persistWorkspaceState();
-    return restarted;
   });
 
-  ipcMain.handle("workspace:focus", async (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.WorkspaceFocus, async (_event, workspaceId: string) => {
     // Immediately demote previously focused workspace so tiers are consistent
     if (focusedWorkspaceId && focusedWorkspaceId !== workspaceId) {
       try {
@@ -381,7 +446,7 @@ function registerIpc(): void {
     return workspaceManager.get(workspaceId);
   });
 
-  ipcMain.handle("workspace:open", (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.WorkspaceOpen, (_event, workspaceId: string) => {
     const workspace = workspaceManager.get(workspaceId);
     if (!workspace) {
       throw new Error("Workspace not found");
@@ -406,12 +471,12 @@ function registerIpc(): void {
     workspaceManager.acknowledgeTerminalProgress(workspace.id);
     workspaceManager.setResourceTier(workspaceId, "focused");
     broadcastWorkspaceUpdate();
-    safeSend("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
+    safeSend(IpcChannels.EventProtocolDiagnosticsUpdated, protocolInterceptor.getDiagnostics());
     void persistWorkspaceState();
     return workspace;
   });
 
-  ipcMain.handle("workspace:stop", async (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.WorkspaceStop, async (_event, workspaceId: string) => {
     ptyActivityBridge.clear(workspaceId);
     const workspace = workspaceManager.stop(workspaceId);
     broadcastWorkspaceUpdate();
@@ -419,7 +484,7 @@ function registerIpc(): void {
     return workspace;
   });
 
-  ipcMain.handle("workspace:dispose", async (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.WorkspaceDispose, async (_event, workspaceId: string) => {
     ptyActivityBridge.clear(workspaceId);
     workspaceManager.dispose(workspaceId);
     activityTimelineByWorkspace.delete(workspaceId);
@@ -430,49 +495,49 @@ function registerIpc(): void {
     await persistWorkspaceState();
   });
 
-  ipcMain.handle("workspace:setAppPort", async (_event, workspaceId: string, appPort: number) => {
+  ipcMain.handle(IpcChannels.WorkspaceSetAppPort, async (_event, workspaceId: string, appPort: number) => {
     const workspace = workspaceManager.setAppPort(workspaceId, appPort);
-    broadcastWorkspaceUpdate();
-    safeSend("diagnostics:protocol:updated", protocolInterceptor.getDiagnostics());
+    broadcastWorkspacePatch(workspaceId);
+    safeSend(IpcChannels.EventProtocolDiagnosticsUpdated, protocolInterceptor.getDiagnostics());
     await persistWorkspaceState();
     return workspace;
   });
 
-  ipcMain.handle("workspace:ideTheme:set", async (_event, themeName: string) => {
+  ipcMain.handle(IpcChannels.WorkspaceSetIdeTheme, async (_event, themeName: string) => {
     workspaceManager.setIdeTheme(themeName);
     await persistWorkspaceState();
     return true;
   });
 
   ipcMain.handle(
-    "workspace:browserState:set",
+    IpcChannels.WorkspaceSetBrowserState,
     async (_event, workspaceId: string, browserTabs: Array<{ id: string; label: string; url?: string; closable: boolean }>, activeBrowserTab: string) => {
       const workspace = workspaceManager.setBrowserState(workspaceId, browserTabs, activeBrowserTab);
-      broadcastWorkspaceUpdate();
+      broadcastWorkspacePatch(workspaceId);
       await persistWorkspaceState();
       return workspace;
     },
   );
 
-  ipcMain.handle("workspace:setAgentLock", async (_event, workspaceId: string, locked: boolean) => {
+  ipcMain.handle(IpcChannels.WorkspaceSetAgentLock, async (_event, workspaceId: string, locked: boolean) => {
     const workspace = workspaceManager.setAgentLock(workspaceId, locked);
-    broadcastWorkspaceUpdate();
+    broadcastWorkspacePatch(workspaceId);
     await persistWorkspaceState();
     return workspace;
   });
 
-  ipcMain.handle("workspace:setTerminalActivity", async (_event, workspaceId: string, active: boolean) => {
+  ipcMain.handle(IpcChannels.WorkspaceSetTerminalActivity, async (_event, workspaceId: string, active: boolean) => {
     const workspace = workspaceManager.setTerminalActivity(workspaceId, active);
-    broadcastWorkspaceUpdate();
+    broadcastWorkspacePatch(workspaceId);
     await persistWorkspaceState();
     return workspace;
   });
 
-  ipcMain.handle("workspace:ptyOutput", (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.WorkspacePtyOutput, (_event, workspaceId: string) => {
     ptyActivityBridge.recordOutput(workspaceId);
   });
 
-  ipcMain.handle("workspace:terminal:start", (_event, workspaceId: string, terminalId?: string) => {
+  ipcMain.handle(IpcChannels.TerminalStart, (_event, workspaceId: string, terminalId?: string) => {
     const terminal = workspaceManager.startTerminal(workspaceId, terminalId);
     return {
       terminal,
@@ -480,11 +545,11 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("workspace:terminal:list", (_event, workspaceId: string) => {
+  ipcMain.handle(IpcChannels.TerminalList, (_event, workspaceId: string) => {
     return getTerminalSnapshot(workspaceId);
   });
 
-  ipcMain.handle("workspace:terminal:create", (_event, workspaceId: string, name?: string) => {
+  ipcMain.handle(IpcChannels.TerminalCreate, (_event, workspaceId: string, name?: string) => {
     const terminal = workspaceManager.createTerminal(workspaceId, name);
     workspaceManager.startTerminal(workspaceId, terminal.id);
     return {
@@ -493,7 +558,7 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("workspace:terminal:rename", (_event, workspaceId: string, terminalId: string, name: string) => {
+  ipcMain.handle(IpcChannels.TerminalRename, (_event, workspaceId: string, terminalId: string, name: string) => {
     const terminal = workspaceManager.renameTerminal(workspaceId, terminalId, name);
     return {
       terminal,
@@ -501,7 +566,7 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("workspace:terminal:setActive", (_event, workspaceId: string, terminalId: string) => {
+  ipcMain.handle(IpcChannels.TerminalSetActive, (_event, workspaceId: string, terminalId: string) => {
     const terminal = workspaceManager.setActiveTerminal(workspaceId, terminalId);
     workspaceManager.startTerminal(workspaceId, terminal.id);
     return {
@@ -510,7 +575,7 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("workspace:terminal:close", (_event, workspaceId: string, terminalId: string) => {
+  ipcMain.handle(IpcChannels.TerminalClose, (_event, workspaceId: string, terminalId: string) => {
     const terminals = workspaceManager.closeTerminal(workspaceId, terminalId);
     return {
       terminals,
@@ -518,7 +583,7 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("devtools:toggle", () => {
+  ipcMain.handle(IpcChannels.DevtoolsToggle, () => {
     if (shellWindow && !shellWindow.isDestroyed()) {
       if (shellWindow.webContents.isDevToolsOpened()) {
         shellWindow.webContents.closeDevTools();
@@ -528,23 +593,34 @@ function registerIpc(): void {
     }
   });
 
-  ipcMain.handle("workspace:terminal:input", (_event, workspaceId: string, terminalId: string, data: string) => {
+  ipcMain.handle(IpcChannels.TerminalInput, (_event, workspaceId: string, terminalId: string, data: string) => {
     workspaceManager.sendTerminalInput(workspaceId, terminalId, data);
   });
 
-  ipcMain.handle("workspace:terminal:resize", (_event, workspaceId: string, terminalId: string, cols: number, rows: number) => {
+  ipcMain.handle(IpcChannels.TerminalResize, (_event, workspaceId: string, terminalId: string, cols: number, rows: number) => {
     workspaceManager.resizeTerminal(workspaceId, terminalId, cols, rows);
   });
 
-  ipcMain.handle("keys:list", async () => keyVault.list());
-  ipcMain.handle("keys:set", async (_event, provider: "anthropic" | "openai", value: string) => {
+  ipcMain.handle(IpcChannels.KeysList, async () => keyVault.list());
+  ipcMain.handle(IpcChannels.KeysSet, async (_event, provider: AiProvider, value: string) => {
+    if (!AI_PROVIDERS.includes(provider)) {
+      throw new Error(`Unknown provider: ${provider}`);
+    }
     await keyVault.set(provider, value);
     return keyVault.list();
   });
 
-  ipcMain.handle("keys:delete", async (_event, provider: "anthropic" | "openai") => {
+  ipcMain.handle(IpcChannels.KeysDelete, async (_event, provider: AiProvider) => {
+    if (!AI_PROVIDERS.includes(provider)) {
+      throw new Error(`Unknown provider: ${provider}`);
+    }
     await keyVault.delete(provider);
     return keyVault.list();
+  });
+
+  ipcMain.handle(IpcChannels.VibeShow, () => {
+    vibeOverlay?.show();
+    return true;
   });
 }
 
@@ -562,6 +638,17 @@ async function startWorkspaceWithProviderEnv(workspaceId: string) {
     ANTHROPIC_API_KEY: anthropicKey,
   };
 
+  // Inject env vars for every other known provider the user has a key for,
+  // so AI CLIs launched inside the workspace (Gemini, Aider with OpenRouter,
+  // Grok, etc.) pick them up without manual shell config.
+  for (const provider of AI_PROVIDERS) {
+    if (provider === "openai" || provider === "anthropic") continue;
+    const value = await keyVault.getDecrypted(provider);
+    if (value) {
+      env[AI_PROVIDER_META[provider].envVar] = value;
+    }
+  }
+
   if (ptyHeartbeatEndpoint) {
     env.OMNI_PTY_HEARTBEAT_URL = ptyHeartbeatEndpoint;
     env.OMNI_PTY_HEARTBEAT_TOKEN = workspace.token;
@@ -570,16 +657,53 @@ async function startWorkspaceWithProviderEnv(workspaceId: string) {
   return workspaceManager.start(workspace.id, env);
 }
 
+const RESTORE_CONCURRENCY = 3;
+const RESTORE_TIMEOUT_MS = 20_000;
+
+/**
+ * Restore previously persisted workspaces with bounded concurrency + a
+ * per-workspace timeout. The old implementation awaited starts sequentially,
+ * so a single stuck workspace would wall off the rest of the user's
+ * environment. We now:
+ *   - Run up to `RESTORE_CONCURRENCY` workspace starts in parallel.
+ *   - Race each start against a timeout and surface timeouts as diagnostic
+ *     events so the renderer can show a non-blocking toast.
+ *   - Call `ensureWorkspaceNetwork()` up front so the protocol handler is
+ *     attached even if the code-server start fails.
+ */
 async function restorePersistedSessions(): Promise<void> {
   const payload = await sessionStore.load();
   focusedWorkspaceId = payload.focusedWorkspaceId;
 
+  // Restore all workspace records up front so the renderer sees them immediately.
+  const restoredWorkspaces: WorkspaceInfo[] = [];
   for (const persisted of payload.workspaces) {
-    const workspace = workspaceManager.restore(persisted);
-    const partitionSession = session.fromPartition(workspace.partition);
-    stripEmbeddingHeaders(partitionSession);
     try {
-      await startWorkspaceWithProviderEnv(workspace.id);
+      const workspace = workspaceManager.restore(persisted);
+      ensureWorkspaceNetwork(workspace);
+      restoredWorkspaces.push(workspace);
+    } catch (err) {
+      logger.error("restore", `Failed to restore persisted workspace ${persisted.slug}`, err);
+      restoreDiagnostics.push({
+        at: Date.now(),
+        workspaceId: persisted.id,
+        workspaceName: persisted.name,
+        status: "failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // Start in parallel with bounded concurrency + timeouts.
+  const queue = [...restoredWorkspaces];
+  const startOne = async (workspace: WorkspaceInfo) => {
+    try {
+      await Promise.race([
+        startWorkspaceWithProviderEnv(workspace.id),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Start timed out after ${RESTORE_TIMEOUT_MS}ms`)), RESTORE_TIMEOUT_MS),
+        ),
+      ]);
       restoreDiagnostics.push({
         at: Date.now(),
         workspaceId: workspace.id,
@@ -587,16 +711,33 @@ async function restorePersistedSessions(): Promise<void> {
         status: "restored",
         message: "Workspace restored and started",
       });
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isTimeout = message.includes("timed out");
+      logger.warn("restore", `Workspace ${workspace.slug} restore ${isTimeout ? "timed out" : "failed"}`, err);
       restoreDiagnostics.push({
         at: Date.now(),
         workspaceId: workspace.id,
         workspaceName: workspace.name,
-        status: "failed",
-        message: workspace.lastError ?? "Workspace restore failed",
+        status: isTimeout ? "timeout" : "failed",
+        message: workspace.lastError ?? message,
       });
     }
+  };
+
+  const workers: Promise<void>[] = [];
+  for (let i = 0; i < RESTORE_CONCURRENCY; i += 1) {
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          const workspace = queue.shift();
+          if (!workspace) return;
+          await startOne(workspace);
+        }
+      })(),
+    );
   }
+  await Promise.all(workers);
 }
 
 async function bootstrap(): Promise<void> {
@@ -605,37 +746,97 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
-  app.on("second-instance", () => {
-    if (!shellWindow) {
-      return;
+  // Register as the default handler for the `omni://` scheme so deep links
+  // from docs / onboarding flows open the app. Packaged builds get this for
+  // free via electron-builder's `protocols` + Info.plist; registering at
+  // runtime covers `npm run dev` on all platforms.
+  if (!app.isDefaultProtocolClient("omni")) {
+    try {
+      app.setAsDefaultProtocolClient("omni");
+    } catch (err) {
+      logger.warn("bootstrap", "Failed to set as default omni:// protocol client", err);
     }
+  }
 
-    if (shellWindow.isMinimized()) {
-      shellWindow.restore();
-    }
-
+  const focusShell = (): void => {
+    if (!shellWindow || shellWindow.isDestroyed()) return;
+    if (shellWindow.isMinimized()) shellWindow.restore();
     shellWindow.focus();
+  };
+
+  const handleDeepLink = (url: string | undefined): void => {
+    if (!url || !url.startsWith("omni://")) return;
+    logger.info("deep-link", `Received ${url}`);
+    focusShell();
+    // Forward to the renderer so future command-palette deep-link handlers
+    // can route to workspaces / vibe without round-tripping through main.
+    safeSend(IpcChannels.EventDeepLink, url);
+  };
+
+  app.on("second-instance", (_event, argv) => {
+    focusShell();
+    // On Windows/Linux the deep-link URL arrives as an argv entry in the
+    // second instance — pick it up from there.
+    const deepLink = argv.find((arg) => typeof arg === "string" && arg.startsWith("omni://"));
+    if (deepLink) handleDeepLink(deepLink);
   });
+
+  // macOS delivers deep links via open-url instead of argv.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleDeepLink(url);
+  });
+
+  // Handle a cold-start deep link on Win/Linux (mac uses open-url even at cold-start).
+  const initialDeepLink = process.argv.find((arg) => typeof arg === "string" && arg.startsWith("omni://"));
 
   await app.whenReady();
   workspaceManager.setCodeServerUserDataRoot(path.join(app.getPath("userData"), "code-server-user-data"));
   keyVault = new KeyVault();
   sessionStore = new SessionStore();
+
+  // Route logger snapshots to the renderer so the diagnostics toast rail stays live.
+  logger.subscribe((events) => broadcastErrors(events));
+
   ptyHeartbeatEndpoint = await ptyHeartbeatServer.start();
-  await restorePersistedSessions();
-  registerIpc();
 
   // Strip embedding-blocking headers on the default session.
-  // Partition sessions are handled when workspaces are created/restored.
+  // Partition sessions are attached when workspaces are created/restored.
   stripEmbeddingHeaders(session.defaultSession);
+
+  await restorePersistedSessions();
+  registerIpc();
 
   shellWindow = createShellWindow();
   broadcastWorkspaceUpdate();
   shellWindow.webContents.once("did-finish-load", () => {
-    safeSend("diagnostics:restore:updated", restoreDiagnostics.slice(-60).reverse());
+    safeSend(IpcChannels.EventRestoreDiagnosticsUpdated, restoreDiagnostics.slice(-60).reverse());
+    broadcastErrors(logger.list(60));
+    if (initialDeepLink) handleDeepLink(initialDeepLink);
   });
   activityMonitor.start();
   ptyActivityBridge.start();
+
+  // Register the Phase 6 Vibe overlay. Prompt submission is currently a
+  // stub that echoes the input back; a follow-up session will connect it
+  // to the omni-bridge streaming path.
+  vibeOverlay = new VibeOverlayManager({
+    onCreateWorkspaceFromPath: async (projectPath) => {
+      const trimmed = projectPath.trim();
+      if (!trimmed) throw new Error("Folder path is empty");
+      const workspace = workspaceManager.create({ projectPath: trimmed });
+      ensureWorkspaceNetwork(workspace);
+      try {
+        await startWorkspaceWithProviderEnv(workspace.id);
+      } catch (err) {
+        logger.warn("VibeOverlay", `Workspace started with errors: ${err instanceof Error ? err.message : "unknown"}`);
+      }
+      broadcastWorkspaceUpdate();
+      await persistWorkspaceState();
+    },
+    onPromptSubmitted: (prompt) => `echo: ${prompt}`,
+  });
+  vibeOverlay.registerShortcut();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -649,14 +850,35 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  app.on("before-quit", () => {
+  app.on("before-quit", (event) => {
+    event.preventDefault();
     activityMonitor.stop();
     ptyActivityBridge.stop();
-    ptyHeartbeatServer.stop();
-    void persistWorkspaceState();
-    for (const workspace of workspaceManager.list()) {
-      workspaceManager.stop(workspace.id);
+    try {
+      vibeOverlay?.dispose();
+    } catch {
+      /* best effort */
     }
+    void (async () => {
+      try {
+        await persistWorkspaceState();
+      } catch (err) {
+        logger.warn("shutdown", "Failed to persist state on quit", err);
+      }
+      for (const workspace of workspaceManager.list()) {
+        try {
+          workspaceManager.stop(workspace.id);
+        } catch {
+          /* best effort */
+        }
+      }
+      try {
+        await ptyHeartbeatServer.stop();
+      } catch {
+        /* best effort */
+      }
+      app.exit(0);
+    })();
   });
 }
 

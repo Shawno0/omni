@@ -14,7 +14,8 @@ import {
 } from "./nameResolver.js";
 import { createPartitionForWorkspace } from "../isolation/partitionFactory.js";
 import { createSessionToken, createWorkspaceId } from "../utils/id.js";
-import { allocatePort } from "../utils/ports.js";
+import { allocateAvailablePort, allocatePort, probeOpenPort, releasePort, reservePort } from "../utils/ports.js";
+import { logger } from "../diagnostics/Logger.js";
 import type { BrowserTabState, WorkspaceCreateInput, WorkspaceInfo } from "../types.js";
 import type { PersistedBrowserTab, PersistedTerminalSession, PersistedWorkspace } from "../state/SessionStore.js";
 
@@ -28,6 +29,7 @@ const DEFAULT_BROWSER_TAB: BrowserTabState = {
 interface WorkspaceRuntime {
   process: ChildProcessWithoutNullStreams | null;
   logs: string[];
+  killTimer: NodeJS.Timeout | null;
 }
 
 interface WorkspaceManagerOptions {
@@ -44,6 +46,8 @@ export interface TerminalSessionInfo {
 interface TerminalRuntime {
   pty: import("node-pty").IPty | null;
   info: TerminalSessionInfo;
+  pendingBuffer: string;
+  flushTimer: NodeJS.Timeout | null;
 }
 
 interface WorkspaceTerminalState {
@@ -95,6 +99,7 @@ export class WorkspaceManager {
     const slug = createUniqueSlug(sanitizeSessionName(rawName), existing);
     const id = createWorkspaceId();
     const idePort = allocatePort();
+    reservePort(idePort);
 
     const workspace: WorkspaceInfo = {
       id,
@@ -124,7 +129,7 @@ export class WorkspaceManager {
     };
 
     this.workspaces.set(id, workspace);
-    this.runtimes.set(id, { logs: [], process: null });
+    this.runtimes.set(id, { logs: [], process: null, killTimer: null });
     this.terminals.set(id, this.createTerminalState());
 
     return workspace;
@@ -158,8 +163,13 @@ export class WorkspaceManager {
       activeBrowserTab: this.resolveActiveBrowserTab(persisted.activeBrowserTab, persisted.browserTabs),
     };
 
+    reservePort(persisted.idePort);
+    if (typeof persisted.appPort === "number") {
+      reservePort(persisted.appPort);
+    }
+
     this.workspaces.set(workspace.id, workspace);
-    this.runtimes.set(workspace.id, { logs: [], process: null });
+    this.runtimes.set(workspace.id, { logs: [], process: null, killTimer: null });
     this.terminals.set(workspace.id, this.createTerminalState(persisted));
     return workspace;
   }
@@ -201,6 +211,24 @@ export class WorkspaceManager {
       return workspace;
     }
 
+    // If the port we previously allocated is no longer bindable (another
+    // process grabbed it, or the OS hasn't released it yet), re-allocate
+    // one that probes cleanly. This prevents "stuck starting" on restart.
+    const portAvailable = await probeOpenPort(workspace.idePort);
+    if (!portAvailable) {
+      logger.warn(
+        "WorkspaceManager",
+        `Port ${workspace.idePort} is busy for workspace ${workspace.slug}, reallocating`,
+      );
+      releasePort(workspace.idePort);
+      try {
+        workspace.idePort = await allocateAvailablePort();
+      } catch (err) {
+        logger.error("WorkspaceManager", "Failed to allocate a fresh IDE port", err);
+        throw err;
+      }
+    }
+
     const launch = this.resolveCodeServerLaunch();
     this.writeWorkspaceThemeSettings(workspace.id);
     const args = [
@@ -217,7 +245,7 @@ export class WorkspaceManager {
     workspace.status = "starting";
     workspace.lastError = undefined;
 
-    const runtime = this.runtimes.get(workspace.id) ?? { logs: [], process: null };
+    const runtime = this.runtimes.get(workspace.id) ?? { logs: [], process: null, killTimer: null };
     const child = spawn(launch.command, args, {
       cwd: path.dirname(workspace.projectPath),
       windowsHide: true,
@@ -290,13 +318,11 @@ export class WorkspaceManager {
     const runtime = this.runtimes.get(workspaceId);
     const terminalState = this.terminals.get(workspaceId);
 
-    runtime?.process?.kill();
-    for (const terminal of terminalState?.terminals.values() ?? []) {
-      terminal.pty?.kill();
-      terminal.pty = null;
+    if (runtime?.process) {
+      this.gracefullyKill(runtime);
     }
-    if (runtime) {
-      runtime.process = null;
+    for (const terminal of terminalState?.terminals.values() ?? []) {
+      this.disposeTerminalRuntime(terminal);
     }
 
     workspace.status = "stopped";
@@ -306,18 +332,76 @@ export class WorkspaceManager {
     return workspace;
   }
 
+  /**
+   * Send SIGTERM, then SIGKILL after a 3s grace window. code-server can hang
+   * on SIGTERM-only during extension shutdowns — without the ladder we leak
+   * processes and the next start() will fail to bind the port.
+   */
+  private gracefullyKill(runtime: WorkspaceRuntime): void {
+    const child = runtime.process;
+    if (!child) return;
+    if (runtime.killTimer) {
+      clearTimeout(runtime.killTimer);
+      runtime.killTimer = null;
+    }
+    try {
+      child.kill("SIGTERM");
+    } catch (err) {
+      logger.warn("WorkspaceManager", "SIGTERM failed, attempting SIGKILL", err);
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* process may already be gone */
+      }
+      runtime.process = null;
+      return;
+    }
+    runtime.killTimer = setTimeout(() => {
+      try {
+        if (!child.killed) child.kill("SIGKILL");
+      } catch {
+        /* noop */
+      }
+      runtime.killTimer = null;
+    }, 3_000);
+    runtime.killTimer.unref?.();
+    runtime.process = null;
+  }
+
   public dispose(workspaceId: string): void {
     const runtime = this.runtimes.get(workspaceId);
     const terminalState = this.terminals.get(workspaceId);
-    runtime?.process?.kill();
+    const workspace = this.workspaces.get(workspaceId);
+
+    if (runtime) {
+      this.gracefullyKill(runtime);
+    }
     for (const terminal of terminalState?.terminals.values() ?? []) {
-      terminal.pty?.kill();
-      terminal.pty = null;
+      this.disposeTerminalRuntime(terminal);
+    }
+
+    if (workspace) {
+      releasePort(workspace.idePort);
+      if (typeof workspace.appPort === "number") releasePort(workspace.appPort);
     }
 
     this.workspaces.delete(workspaceId);
     this.runtimes.delete(workspaceId);
     this.terminals.delete(workspaceId);
+  }
+
+  private disposeTerminalRuntime(terminal: TerminalRuntime): void {
+    if (terminal.flushTimer) {
+      clearTimeout(terminal.flushTimer);
+      terminal.flushTimer = null;
+    }
+    terminal.pendingBuffer = "";
+    try {
+      terminal.pty?.kill();
+    } catch {
+      /* already gone */
+    }
+    terminal.pty = null;
   }
 
   public listTerminals(workspaceId: string): TerminalSessionInfo[] {
@@ -367,8 +451,7 @@ export class WorkspaceManager {
     const state = this.getTerminalState(workspaceId);
     const runtime = this.getTerminalRuntime(state, terminalId);
 
-    runtime.pty?.kill();
-    runtime.pty = null;
+    this.disposeTerminalRuntime(runtime);
     state.terminals.delete(terminalId);
     state.order = state.order.filter((id) => id !== terminalId);
 
@@ -405,6 +488,30 @@ export class WorkspaceManager {
     }
 
     const emit = (msg: string) => this.options.onTerminalOutput?.(workspace.id, terminal.info.id, msg);
+    // Batched emitter: PTYs frequently produce output char-by-char during
+    // interactive sessions, and per-char IPC hops are the dominant cost during
+    // log storms (e.g. `npm install`). Coalesce bytes on a ~16ms window.
+    const emitBatched = (chunk: string) => {
+      terminal.pendingBuffer += chunk;
+      if (terminal.pendingBuffer.length > 64 * 1024) {
+        const buffered = terminal.pendingBuffer;
+        terminal.pendingBuffer = "";
+        if (terminal.flushTimer) {
+          clearTimeout(terminal.flushTimer);
+          terminal.flushTimer = null;
+        }
+        emit(buffered);
+        return;
+      }
+      if (terminal.flushTimer) return;
+      terminal.flushTimer = setTimeout(() => {
+        terminal.flushTimer = null;
+        const buffered = terminal.pendingBuffer;
+        terminal.pendingBuffer = "";
+        if (buffered.length > 0) emit(buffered);
+      }, 16);
+      terminal.flushTimer.unref?.();
+    };
 
     try {
       emit("\x1b[90m[omni] Loading node-pty...\x1b[0m\r\n");
@@ -429,7 +536,7 @@ export class WorkspaceManager {
       emit(`\x1b[90m[omni] PTY spawned (PID ${ptyProcess.pid})\x1b[0m\r\n`);
 
       ptyProcess.onData((data: string) => {
-        emit(data);
+        emitBatched(data);
       });
 
       ptyProcess.onExit(() => {
@@ -475,7 +582,11 @@ export class WorkspaceManager {
 
   public setAppPort(workspaceId: string, appPort: number): WorkspaceInfo {
     const workspace = this.mustGet(workspaceId);
+    if (typeof workspace.appPort === "number" && workspace.appPort !== appPort) {
+      releasePort(workspace.appPort);
+    }
     workspace.appPort = appPort;
+    reservePort(appPort);
     return workspace;
   }
 
@@ -730,6 +841,8 @@ export class WorkspaceManager {
     const resolvedName = name?.trim() || `Terminal ${state.counter}`;
     return {
       pty: null,
+      pendingBuffer: "",
+      flushTimer: null,
       info: {
         id: crypto.randomUUID(),
         name: resolvedName,
@@ -759,6 +872,8 @@ export class WorkspaceManager {
 
       const runtime: TerminalRuntime = {
         pty: null,
+        pendingBuffer: "",
+        flushTimer: null,
         info: {
           id: session.id,
           name: session.name,

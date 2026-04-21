@@ -1,5 +1,9 @@
 appId: com.omni.desktop
 productName: Omni
+# Deep-link scheme registered cross-platform by electron-builder.
+# macOS: writes CFBundleURLTypes into the .app Info.plist.
+# Windows: registers HKCU\Software\Classes\omni during NSIS install.
+# Linux: adds the MIME type + x-scheme-handler via the .desktop file.
 protocols:
   - name: Omni Link
     schemes:
@@ -12,8 +16,27 @@ files:
   - package.json
 asarUnpack:
   - vendor/**
+# Runs after electron-builder stages app resources into appOutDir but
+# before platform-specific packaging/signing. Replaces symlinks inside
+# the bundled code-server vendor tree with real copies so Windows
+# signtool + NSIS don't choke on them.
+beforePack: scripts/normalizeVendorSymlinks.mjs
 directories:
   output: out
+mac:
+  category: public.app-category.developer-tools
+  icon: build/logo-256.png
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  extendInfo:
+    NSCameraUsageDescription: Omni never accesses the camera.
+    NSMicrophoneUsageDescription: Omni never accesses the microphone.
+    LSMinimumSystemVersion: "11.0"
+dmg:
+  sign: false
 win:
   signAndEditExecutable: false
   icon: build/logo-256.png
@@ -24,3 +47,11 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+linux:
+  category: Development
+  icon: build/logo-256.png
+  target:
+    - AppImage
+    - deb
+  desktop:
+    MimeType: x-scheme-handler/omni;

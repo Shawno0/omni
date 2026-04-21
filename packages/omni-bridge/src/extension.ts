@@ -149,27 +149,27 @@ class OmniBridgeProvider {
       },
     });
 
-    const response = await this.callProvider(
-      provider,
-      toolContext
-        ? [
-            ...transcript,
-            {
-              role: "system",
-              content: `Tool result context: ${toolContext}`,
-            },
-          ]
-        : transcript,
-      options,
-    );
+    const finalTranscript = toolContext
+      ? [
+          ...transcript,
+          {
+            role: "system" as const,
+            content: `Tool result context: ${toolContext}`,
+          },
+        ]
+      : transcript;
 
-    const chunks = this.chunk(response, 80);
-    for (const chunk of chunks) {
+    // Stream directly into the progress reporter. Cancellation aborts the
+    // upstream HTTP request so tokens stop flowing immediately rather than
+    // just being dropped in-flight.
+    try {
+      await this.streamProvider(provider, finalTranscript, options, progress, token);
+    } catch (error) {
       if (token.isCancellationRequested) {
-        break;
+        return;
       }
-      progress.report(new vscode.LanguageModelTextPart(chunk));
-      await new Promise((resolve) => setTimeout(resolve, 12));
+      const message = error instanceof Error ? error.message : "unknown error";
+      progress.report(new vscode.LanguageModelTextPart(`\n[stream error] ${message}`));
     }
   }
 
@@ -350,6 +350,216 @@ class OmniBridgeProvider {
     return this.callAnthropic(transcript, options);
   }
 
+  /**
+   * Stream a response from the chosen provider directly into the VS Code
+   * progress reporter. Unlike `callProvider`, this does not buffer the
+   * entire response: tokens are forwarded as they arrive, and cancellation
+   * aborts the HTTP request instead of merely dropping tail chunks.
+   */
+  private async streamProvider(
+    provider: "openai" | "anthropic",
+    transcript: TranscriptMessage[],
+    options: ProviderCallOptions | undefined,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const emit = (chunk: string) => {
+      if (!chunk) return;
+      progress.report(new vscode.LanguageModelTextPart(chunk));
+    };
+
+    if (provider === "openai") {
+      await this.streamOpenAI(transcript, options, emit, token);
+      return;
+    }
+    await this.streamAnthropic(transcript, options, emit, token);
+  }
+
+  private async streamOpenAI(
+    transcript: TranscriptMessage[],
+    options: ProviderCallOptions | undefined,
+    emit: (chunk: string) => void,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      emit("OpenAI API key is not configured in environment.");
+      return;
+    }
+
+    const model = String(options?.modelOptions?.model ?? "gpt-4o-mini");
+    const payload = {
+      model,
+      stream: true,
+      temperature: Number(options?.modelOptions?.temperature ?? 0.2),
+      messages: transcript.map((entry) => ({ role: entry.role, content: entry.content })),
+    };
+
+    const retry = this.readRetryOptions(options);
+    const controller = new AbortController();
+    const cancelDisposable = token.onCancellationRequested(() => controller.abort());
+
+    try {
+      const response = await this.fetchWithTimeout(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        },
+        retry.timeoutMs,
+      );
+
+      if (!response.ok || !response.body) {
+        const body = await response.text();
+        emit(`OpenAI request failed (${response.status}): ${body.slice(0, 500)}`);
+        return;
+      }
+
+      await this.readSseStream(response.body, (event) => {
+        if (!event || event === "[DONE]") return;
+        try {
+          const parsed = JSON.parse(event) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) emit(delta);
+        } catch {
+          // Ignore keep-alive / malformed lines.
+        }
+      }, token);
+    } finally {
+      cancelDisposable.dispose();
+    }
+  }
+
+  private async streamAnthropic(
+    transcript: TranscriptMessage[],
+    options: ProviderCallOptions | undefined,
+    emit: (chunk: string) => void,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      emit("Anthropic API key is not configured in environment.");
+      return;
+    }
+
+    const model = String(options?.modelOptions?.model ?? "claude-3-5-haiku-latest");
+    const systemMessages = transcript.filter((entry) => entry.role === "system").map((entry) => entry.content);
+    const nonSystem = transcript.filter((entry) => entry.role !== "system");
+
+    const retry = this.readRetryOptions(options);
+    const controller = new AbortController();
+    const cancelDisposable = token.onCancellationRequested(() => controller.abort());
+
+    try {
+      const response = await this.fetchWithTimeout(
+        "https://api.anthropic.com/v1/messages",
+        {
+          method: "POST",
+          headers: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          },
+          body: JSON.stringify({
+            model,
+            stream: true,
+            max_tokens: Number(options?.modelOptions?.max_tokens ?? 1024),
+            temperature: Number(options?.modelOptions?.temperature ?? 0.2),
+            system: systemMessages.join("\n\n") || undefined,
+            messages: nonSystem.map((entry) => ({
+              role: entry.role === "assistant" ? "assistant" : "user",
+              content: entry.content,
+            })),
+          }),
+          signal: controller.signal,
+        },
+        retry.timeoutMs,
+      );
+
+      if (!response.ok || !response.body) {
+        const body = await response.text();
+        emit(`Anthropic request failed (${response.status}): ${body.slice(0, 500)}`);
+        return;
+      }
+
+      await this.readSseStream(response.body, (event) => {
+        if (!event) return;
+        try {
+          const parsed = JSON.parse(event) as {
+            type?: string;
+            delta?: { type?: string; text?: string };
+          };
+          if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+            const text = parsed.delta.text;
+            if (typeof text === "string" && text.length > 0) emit(text);
+          }
+        } catch {
+          // Ignore keep-alive / ping events.
+        }
+      }, token);
+    } finally {
+      cancelDisposable.dispose();
+    }
+  }
+
+  /**
+   * Parse an `ReadableStream<Uint8Array>` SSE body into individual event
+   * payload strings (the `data:` field). Handles multi-line `data:` fields
+   * per the SSE spec. The caller is responsible for JSON-parsing events.
+   */
+  private async readSseStream(
+    body: ReadableStream<Uint8Array>,
+    onEvent: (event: string) => void,
+    token: vscode.CancellationToken,
+  ): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    try {
+      while (true) {
+        if (token.isCancellationRequested) {
+          await reader.cancel();
+          return;
+        }
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx: number;
+        // Events are delimited by blank lines; support both \n\n and \r\n\r\n.
+        while ((idx = this.findEventBoundary(buffer)) !== -1) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx).replace(/^(\r?\n){1,2}/, "");
+          const data = raw
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n");
+          if (data) onEvent(data);
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+
+  private findEventBoundary(buffer: string): number {
+    const nn = buffer.indexOf("\n\n");
+    const rnrn = buffer.indexOf("\r\n\r\n");
+    if (nn === -1) return rnrn;
+    if (rnrn === -1) return nn;
+    return Math.min(nn, rnrn);
+  }
+
   private async callOpenAI(
     transcript: TranscriptMessage[],
     options?: ProviderCallOptions,
@@ -477,6 +687,13 @@ class OmniBridgeProvider {
   private async fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // If the caller already passed a signal (cancellation), merge it with
+    // the timeout controller so either can abort the request.
+    const callerSignal = init.signal as AbortSignal | undefined;
+    if (callerSignal) {
+      if (callerSignal.aborted) controller.abort();
+      else callerSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
     try {
       return await fetch(url, {
         ...init,

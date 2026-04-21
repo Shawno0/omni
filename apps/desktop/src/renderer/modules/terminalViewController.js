@@ -13,10 +13,19 @@
     const Terminal = window.Terminal;
     const FitAddon = window.FitAddon;
 
-    let bottomTerm = null;
-    let bottomFit = null;
-    let focusedTerm = null;
-    let focusedFit = null;
+    // Single-instance xterm architecture: we keep one `Terminal` + one
+    // `FitAddon`, mounted into a persistent host element (`termHost`).
+    // When the layout switches between the bottom panel and the focused
+    // surface we physically reparent `termHost` into whichever container
+    // is visible. xterm's internal canvas follows the DOM move, which
+    // eliminates the duplicate write/reset bookkeeping the controller
+    // used to do for mirrored instances — and halves memory/CPU since
+    // every PTY byte was previously written twice.
+    let term = null;
+    let fitAddon = null;
+    let termHost = null;
+    /** Container currently hosting `termHost` (bottom or focused). */
+    let activeContainer = null;
 
     const xtermDarkTheme = {
       background: "#181818",
@@ -66,10 +75,12 @@
       brightWhite: "#a5a5a5",
     };
 
-    const createXtermInstance = (container) => {
-      if (!Terminal || !FitAddon || !container) return null;
-      const fitAddon = new FitAddon.FitAddon();
-      const term = new Terminal({
+    const createXtermInstance = () => {
+      if (!Terminal || !FitAddon) return null;
+      const host = document.createElement("div");
+      host.className = "xterm-host";
+      const addon = new FitAddon.FitAddon();
+      const instance = new Terminal({
         theme: xtermDarkTheme,
         fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
         fontSize: 13,
@@ -79,31 +90,48 @@
         allowProposedApi: true,
         scrollback: 5000,
       });
-      term.loadAddon(fitAddon);
-      term.open(container);
-      requestAnimationFrame(() => {
-        try {
-          fitAddon.fit();
-        } catch {}
-      });
-      return { term, fitAddon };
+      instance.loadAddon(addon);
+      return { term: instance, fitAddon: addon, host };
+    };
+
+    /**
+     * Decides which container the shared xterm host should live in,
+     * based on the current layout mode + focused surface, and moves
+     * the host if it is somewhere else. Safe to call repeatedly.
+     */
+    const syncHostContainer = () => {
+      if (!termHost) return null;
+      const preferFocused =
+        getLayoutMode() === "focused" && getFocusedSurface() === "terminal";
+      const target = preferFocused
+        ? elements.focusedTerminalContainer
+        : elements.terminalContainer;
+      if (!target) return activeContainer;
+      if (termHost.parentElement !== target) {
+        target.appendChild(termHost);
+        activeContainer = target;
+        // xterm computes its renderer dimensions from the host's bounding
+        // box; the DOM move invalidates those, so fit on the next frame
+        // once layout settles.
+        requestAnimationFrame(() => {
+          try {
+            fitAddon?.fit();
+          } catch {}
+        });
+      } else {
+        activeContainer = target;
+      }
+      return activeContainer;
     };
 
     const fitAllTerminals = () => {
+      syncHostContainer();
       try {
-        bottomFit?.fit();
-      } catch {}
-      try {
-        focusedFit?.fit();
+        fitAddon?.fit();
       } catch {}
 
-      const activeTerm =
-        getLayoutMode() === "focused" && getFocusedSurface() === "terminal"
-          ? focusedTerm
-          : bottomTerm;
-
-      if (activeTerm && getSelectedWorkspaceId() && getActiveTerminalId() && api?.resizeTerminal) {
-        api.resizeTerminal(getSelectedWorkspaceId(), getActiveTerminalId(), activeTerm.cols, activeTerm.rows);
+      if (term && getSelectedWorkspaceId() && getActiveTerminalId() && api?.resizeTerminal) {
+        api.resizeTerminal(getSelectedWorkspaceId(), getActiveTerminalId(), term.cols, term.rows);
       }
     };
 
@@ -114,53 +142,49 @@
       diagnostics.push(`container=${elements.terminalContainer ? "ok" : "MISSING"}`);
       diagnostics.push(`focusedContainer=${elements.focusedTerminalContainer ? "ok" : "MISSING"}`);
 
-      const bottom = createXtermInstance(elements.terminalContainer);
-      if (bottom) {
-        bottomTerm = bottom.term;
-        bottomFit = bottom.fitAddon;
-        bottomTerm.onData((data) => {
-          if (getSelectedWorkspaceId() && getActiveTerminalId() && api?.sendTerminalInput) {
-            api.sendTerminalInput(getSelectedWorkspaceId(), getActiveTerminalId(), data);
-          }
-        });
-        bottomTerm.write(`\x1b[36m[xterm] ${diagnostics.join(", ")}\x1b[0m\r\n`);
-        bottomTerm.write("\x1b[36m[xterm] bottomTerm created successfully\x1b[0m\r\n");
-      } else if (elements.terminalContainer) {
-        elements.terminalContainer.innerHTML = `<pre style="color:#f87171;padding:8px;font:12px monospace;">[xterm init failed]\n${diagnostics.join("\n")}</pre>`;
+      const created = createXtermInstance();
+      if (!created) {
+        if (elements.terminalContainer) {
+          elements.terminalContainer.innerHTML = `<pre style="color:#f87171;padding:8px;font:12px monospace;">[xterm init failed]\n${diagnostics.join("\n")}</pre>`;
+        }
+        return;
       }
 
-      const focused = createXtermInstance(elements.focusedTerminalContainer);
-      if (focused) {
-        focusedTerm = focused.term;
-        focusedFit = focused.fitAddon;
-        focusedTerm.onData((data) => {
-          if (getSelectedWorkspaceId() && getActiveTerminalId() && api?.sendTerminalInput) {
-            api.sendTerminalInput(getSelectedWorkspaceId(), getActiveTerminalId(), data);
-          }
-        });
+      term = created.term;
+      fitAddon = created.fitAddon;
+      termHost = created.host;
+
+      // Park the host in whichever container is currently visible, then
+      // open xterm against it. `term.open()` only needs to be called once
+      // and is happy to follow subsequent `appendChild` reparenting.
+      syncHostContainer();
+      if (activeContainer) {
+        term.open(termHost);
       }
+
+      term.onData((data) => {
+        if (getSelectedWorkspaceId() && getActiveTerminalId() && api?.sendTerminalInput) {
+          api.sendTerminalInput(getSelectedWorkspaceId(), getActiveTerminalId(), data);
+        }
+      });
+
+      term.write(`\x1b[36m[xterm] ${diagnostics.join(", ")}\x1b[0m\r\n`);
+      term.write("\x1b[36m[xterm] single-instance terminal ready\x1b[0m\r\n");
 
       const termTabContent = elements.terminalContainer?.closest(".bottom-tab-content");
       if (termTabContent) {
         termTabContent.style.overflow = "hidden";
         termTabContent.style.padding = "0";
-        requestAnimationFrame(() => fitAllTerminals());
       }
+      requestAnimationFrame(() => fitAllTerminals());
     };
 
     const updateTheme = (resolvedTheme) => {
       const theme = resolvedTheme === "dark" ? xtermDarkTheme : xtermLightTheme;
-      if (bottomTerm) {
-        bottomTerm.options.theme = theme;
-        if (typeof bottomTerm.refresh === "function") {
-          bottomTerm.refresh(0, Math.max(0, bottomTerm.rows - 1));
-        }
-      }
-      if (focusedTerm) {
-        focusedTerm.options.theme = theme;
-        if (typeof focusedTerm.refresh === "function") {
-          focusedTerm.refresh(0, Math.max(0, focusedTerm.rows - 1));
-        }
+      if (!term) return;
+      term.options.theme = theme;
+      if (typeof term.refresh === "function") {
+        term.refresh(0, Math.max(0, term.rows - 1));
       }
     };
 
@@ -168,19 +192,21 @@
       init,
       fitAllTerminals,
       updateTheme,
-      getBottomTerm: () => bottomTerm,
-      getFocusedTerm: () => focusedTerm,
-      resetBoth: () => {
-        bottomTerm?.reset();
-        focusedTerm?.reset();
-      },
-      writeBoth: (data) => {
-        bottomTerm?.write(data);
-        focusedTerm?.write(data);
-      },
+      /** Returns the single shared xterm instance (or null before init). */
+      getTerminal: () => term,
+      // Back-compat shims so other modules don't need to change in lockstep.
+      // Both "bottom" and "focused" map to the same underlying terminal.
+      getBottomTerm: () => term,
+      getFocusedTerm: () => term,
+      reset: () => term?.reset(),
+      write: (data) => term?.write(data),
+      // Deprecated aliases kept while callers are migrated.
+      resetBoth: () => term?.reset(),
+      writeBoth: (data) => term?.write(data),
       fitBottomPanelOnly: () => {
+        if (activeContainer !== elements.terminalContainer) return;
         try {
-          bottomFit?.fit();
+          fitAddon?.fit();
         } catch {}
       },
     };

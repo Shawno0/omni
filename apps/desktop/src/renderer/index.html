@@ -48,35 +48,6 @@
 
         <!-- Workspace List -->
         <ul id="workspace-list" class="workspace-list"></ul>
-
-        <!-- Sidebar Bottom Sections -->
-        <div class="sidebar-sections">
-          <!-- Settings -->
-          <section class="panel-card collapsed" data-card-id="settings">
-            <button class="panel-card-header" data-card-toggle="settings" aria-expanded="false">
-              <h2>Settings</h2>
-              <span class="panel-card-chevron">▾</span>
-            </button>
-            <div class="panel-card-body" data-card-body="settings">
-              <div class="settings-grid">
-                <label>
-                  Palette Key
-                  <input id="setting-palette-key" maxlength="1" placeholder="k" />
-                </label>
-                <label>
-                  Restart Key
-                  <input id="setting-restart-key" maxlength="1" placeholder="r" />
-                </label>
-              </div>
-              <div class="settings-actions">
-                <button id="save-settings" class="btn-primary">Save</button>
-                <button id="reset-settings" class="ghost">Reset</button>
-              </div>
-              <p id="settings-status" class="settings-status">Ctrl/Cmd + key shortcuts.</p>
-            </div>
-          </section>
-
-        </div>
       </aside>
 
       <!-- ============================================================= -->
@@ -94,7 +65,14 @@
               <button id="layout-overview" class="layout-btn active" title="Overview: side-by-side IDE + Preview">Overview</button>
               <button id="layout-focused" class="layout-btn" title="Focused: full-size tabbed panes">Focused</button>
             </div>
+            <button id="vibe-open" class="ghost" title="Open Vibe prompt (Cmd/Ctrl+Shift+Space)">✨ Vibe</button>
             <button id="quick-actions-button" class="ghost" title="Ctrl/Cmd+K">⌘K</button>
+            <button id="settings-open" class="btn-icon" aria-label="Open settings" title="Settings">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+              </svg>
+            </button>
           </div>
         </header>
 
@@ -238,6 +216,13 @@
             Session Name (optional)
             <input id="modal-workspace-name" placeholder="my-project" />
           </label>
+          <div id="workspace-modal-dropzone" class="workspace-modal-dropzone" aria-hidden="true">
+            <span>Drop a folder here to select it</span>
+          </div>
+          <div id="workspace-modal-recent" class="workspace-modal-recent" hidden>
+            <div class="workspace-modal-recent-header">Recent folders</div>
+            <ul id="workspace-modal-recent-list" class="workspace-modal-recent-list"></ul>
+          </div>
         </div>
         <div class="workspace-modal-actions">
           <button id="workspace-modal-cancel" class="ghost">Cancel</button>
@@ -246,10 +231,54 @@
       </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div id="settings-modal-overlay" class="workspace-modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="workspace-modal-card settings-modal-card">
+        <div class="workspace-modal-header">
+          <h3>Settings</h3>
+          <button id="settings-modal-close" class="btn-icon" aria-label="Close settings" title="Close">✕</button>
+        </div>
+        <nav class="settings-tabs" role="tablist">
+          <button class="settings-tab active" data-settings-tab="providers" role="tab" aria-selected="true">AI Providers</button>
+          <button class="settings-tab" data-settings-tab="shortcuts" role="tab" aria-selected="false">Shortcuts</button>
+        </nav>
+        <div class="settings-modal-body">
+          <!-- AI Providers Tab -->
+          <div class="settings-tab-panel active" data-settings-panel="providers" role="tabpanel">
+            <p class="settings-panel-hint">
+              API keys are encrypted with your OS keychain and injected as environment variables into every workspace.
+              AI CLIs (Claude Code, Codex, Aider, Gemini-CLI, etc.) running inside the workspace will pick them up automatically.
+            </p>
+            <ul id="settings-provider-list" class="settings-provider-list"></ul>
+          </div>
+          <!-- Shortcuts Tab -->
+          <div class="settings-tab-panel" data-settings-panel="shortcuts" role="tabpanel" hidden>
+            <p class="settings-panel-hint">Single-character shortcut keys used with Ctrl/Cmd.</p>
+            <div class="settings-grid">
+              <label>
+                Palette Key
+                <input id="setting-palette-key" maxlength="1" placeholder="k" />
+              </label>
+              <label>
+                Restart Key
+                <input id="setting-restart-key" maxlength="1" placeholder="r" />
+              </label>
+            </div>
+            <div class="settings-actions">
+              <button id="save-settings" class="btn-primary">Save</button>
+              <button id="reset-settings" class="ghost">Reset</button>
+            </div>
+            <p id="settings-status" class="settings-status">Ctrl/Cmd + key shortcuts.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script src="../../../../node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="../../../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="./modules/themeController.js"></script>
     <script src="./modules/workspaceModalController.js"></script>
+    <script src="./modules/settingsModalController.js"></script>
     <script src="./modules/previewManager.js"></script>
     <script src="./modules/quickActionsController.js"></script>
     <script src="./modules/browserTabsController.js"></script>
@@ -257,6 +286,7 @@
     <script src="./modules/workspaceListController.js"></script>
     <script src="./modules/uiChromeController.js"></script>
     <script src="./modules/diagnosticsController.js"></script>
+    <script src="./modules/toastController.js"></script>
     <script src="./modules/terminalViewController.js"></script>
     <script src="./modules/initController.js"></script>
     <script src="./renderer.js" defer></script>

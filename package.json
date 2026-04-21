@@ -10,12 +10,16 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "update:code-server": "npm run update:code-server -w @omni/desktop",
     "dev": "npm run dev -w @omni/desktop",
     "start": "npm run start -w @omni/desktop"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }

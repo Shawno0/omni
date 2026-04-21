@@ -6,19 +6,91 @@
     elements,
     getPaletteShortcut,
     getWorkspaces,
+    getSelectedWorkspaceId,
     setSelectedWorkspaceId,
     onRefresh,
     onToggleSidebar,
     onOpenWorkspaceModal,
     focusWorkspace,
+    restartWorkspace,
+    stopWorkspace,
+    onToggleTheme,
+    onToggleDevTools,
+    onSetLayoutMode,
+    onSetFocusedSurface,
+    onOpenDiagnosticsTab,
+    onDetectDevPort,
   }) => {
     let quickActiveIndex = 0;
 
+    const safe = (fn) => (...args) => {
+      try {
+        const result = fn?.(...args);
+        if (result && typeof result.catch === "function") {
+          result.catch((err) => console.warn("[omni/palette] action failed", err));
+        }
+      } catch (err) {
+        console.warn("[omni/palette] action threw", err);
+      }
+    };
+
     const quickActions = [
-      { group: "Workspaces", title: "New Workspace", key: "n", action: () => onOpenWorkspaceModal() },
-      { group: "Workspaces", title: "Refresh All", key: "r", action: () => void onRefresh({ loadActivity: true }) },
-      { group: "View", title: "Toggle Sidebar", key: "b", action: () => onToggleSidebar() },
-    ];
+      { group: "Workspaces", title: "New Workspace", key: "n", handler: onOpenWorkspaceModal },
+      {
+        group: "Workspaces",
+        title: "Refresh All",
+        key: "r",
+        handler: onRefresh ? () => onRefresh({ loadActivity: true }) : null,
+      },
+      {
+        group: "Workspaces",
+        title: "Restart Current Workspace",
+        handler: restartWorkspace ? () => {
+          const id = getSelectedWorkspaceId?.();
+          if (id) restartWorkspace(id);
+        } : null,
+      },
+      {
+        group: "Workspaces",
+        title: "Stop Current Workspace",
+        handler: stopWorkspace ? () => {
+          const id = getSelectedWorkspaceId?.();
+          if (id) stopWorkspace(id);
+        } : null,
+      },
+      { group: "View", title: "Toggle Sidebar", key: "b", handler: onToggleSidebar },
+      { group: "View", title: "Layout: Overview", handler: onSetLayoutMode ? () => onSetLayoutMode("overview") : null },
+      {
+        group: "View",
+        title: "Layout: Focused (IDE)",
+        handler: onSetLayoutMode && onSetFocusedSurface ? () => { onSetLayoutMode("focused"); onSetFocusedSurface("ide"); } : null,
+      },
+      {
+        group: "View",
+        title: "Layout: Focused (Preview)",
+        handler: onSetLayoutMode && onSetFocusedSurface ? () => { onSetLayoutMode("focused"); onSetFocusedSurface("preview"); } : null,
+      },
+      {
+        group: "View",
+        title: "Layout: Focused (Terminal)",
+        handler: onSetLayoutMode && onSetFocusedSurface ? () => { onSetLayoutMode("focused"); onSetFocusedSurface("terminal"); } : null,
+      },
+      { group: "View", title: "Toggle Theme", handler: onToggleTheme },
+      {
+        group: "Preview",
+        title: "Detect App Port (scan common dev ports)",
+        handler: onDetectDevPort ? () => {
+          const id = getSelectedWorkspaceId?.();
+          if (id) onDetectDevPort(id);
+        } : null,
+      },
+      { group: "Diagnostics", title: "Open Diagnostics Panel", handler: onOpenDiagnosticsTab ? () => onOpenDiagnosticsTab("diagnostics") : null },
+      { group: "Diagnostics", title: "Open Protocol Events", handler: onOpenDiagnosticsTab ? () => onOpenDiagnosticsTab("protocol") : null },
+      { group: "Diagnostics", title: "Open Activity Monitor", handler: onOpenDiagnosticsTab ? () => onOpenDiagnosticsTab("activity") : null },
+      { group: "Diagnostics", title: "Toggle Developer Tools", handler: onToggleDevTools },
+    ]
+      .filter((a) => typeof a.handler === "function")
+      .map((a) => ({ ...a, action: safe(a.handler) }));
 
     const closeQuickActions = () => {
       if (!elements.quickActionsOverlay) return;

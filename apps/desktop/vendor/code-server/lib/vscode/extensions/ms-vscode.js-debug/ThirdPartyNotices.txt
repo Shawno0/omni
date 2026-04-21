@@ -1345,7 +1345,7 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ---------------------------------------------------------
 
-minimatch 3.1.2 - ISC
+minimatch 3.1.4 - ISC
 https://github.com/isaacs/minimatch#readme
 
 Copyright (c) Isaac Z. Schlueter and Contributors
@@ -1371,7 +1371,7 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ---------------------------------------------------------
 
-minimatch 9.0.5 - ISC
+minimatch 9.0.7 - ISC
 https://github.com/isaacs/minimatch#readme
 
 Copyright (c) 2011-2023 Isaac Z. Schlueter and Contributors
@@ -2280,6 +2280,41 @@ SOFTWARE.
 
 ---------------------------------------------------------
 
+balanced-match 4.0.4 - MIT
+https://github.com/juliangruber/balanced-match#readme
+
+Copyright Isaac Z. Schlueter <i@izs.me>
+Copyright Julian Gruber <julian@juliangruber.com>
+
+(MIT)
+
+Original code Copyright Julian Gruber <julian@juliangruber.com>
+
+Port to TypeScript Copyright Isaac Z. Schlueter <i@izs.me>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+---------------------------------------------------------
+
+---------------------------------------------------------
+
 base 0.11.2 - MIT
 https://github.com/node-base/base
 
@@ -2345,14 +2380,17 @@ SOFTWARE.
 
 ---------------------------------------------------------
 
-brace-expansion 2.0.2 - MIT
-https://github.com/juliangruber/brace-expansion
+brace-expansion 5.0.3 - MIT
+https://github.com/juliangruber/brace-expansion#readme
 
-Copyright (c) 2013 Julian Gruber <julian@juliangruber.com>
+Copyright Isaac Z. Schlueter <i@izs.me>
+Copyright Julian Gruber <julian@juliangruber.com>
 
 MIT License
 
-Copyright (c) 2013 Julian Gruber <julian@juliangruber.com>
+Copyright Julian Gruber <julian@juliangruber.com>
+
+TypeScript port Copyright Isaac Z. Schlueter <i@izs.me>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -3068,7 +3106,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ---------------------------------------------------------
 
-debug 4.4.0 - MIT
+debug 4.4.3 - MIT
 https://github.com/debug-js/debug#readme
 
 Copyright (c) 2018-2021 Josh Junon

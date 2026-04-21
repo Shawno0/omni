@@ -30,6 +30,9 @@ window.__omniRendererInitialized = false;
     modalProjectPath: el("modal-project-path"),
     modalWorkspaceName: el("modal-workspace-name"),
     modalBrowsePath: el("modal-browse-path"),
+    modalDropzone: el("workspace-modal-dropzone"),
+    modalRecent: el("workspace-modal-recent"),
+    modalRecentList: el("workspace-modal-recent-list"),
     sessionTabs: el("session-tabs"),
     themeToggle: el("theme-toggle"),
     themeToggleIcon: el("theme-toggle-icon"),
@@ -49,6 +52,11 @@ window.__omniRendererInitialized = false;
     settingsStatus: el("settings-status"),
     paletteKey: el("setting-palette-key"),
     restartKey: el("setting-restart-key"),
+    settingsOpen: el("settings-open"),
+    settingsModal: el("settings-modal-overlay"),
+    settingsModalClose: el("settings-modal-close"),
+    settingsProviderList: el("settings-provider-list"),
+    vibeOpen: el("vibe-open"),
     layoutOverview: el("layout-overview"),
     layoutFocused: el("layout-focused"),
     focusedSurfaceTabs: el("focused-surface-tabs"),
@@ -789,6 +797,23 @@ window.__omniRendererInitialized = false;
     workspacesUpdateTimer = setTimeout(() => void flushWorkspaceUpdates(), 120);
   };
 
+  /**
+   * Merge a single-workspace patch into the pending payload (or current
+   * list if none pending) and schedule the normal debounced flush. This
+   * is the renderer counterpart to the main process's broadcastWorkspacePatch
+   * fast path.
+   */
+  const applyWorkspacePatch = (patch) => {
+    if (!patch || !patch.id) return;
+    const base = pendingWorkspacesPayload || workspaces;
+    const idx = base.findIndex((w) => w.id === patch.id);
+    const next = base.slice();
+    if (idx >= 0) next[idx] = patch;
+    else next.push(patch);
+    pendingWorkspacesPayload = next;
+    scheduleWorkspaceUpdateFlush();
+  };
+
   /* ─── Refresh ─────────────────────────────────────────────────────── */
   const refresh = async (options = {}) => {
     const { loadActivity: doActivity = false } = options;
@@ -817,29 +842,21 @@ window.__omniRendererInitialized = false;
   let initController = null;
 
   /* ─── Settings ────────────────────────────────────────────────────── */
+  // The Settings modal now owns both the shortcut keys and the AI-provider
+  // key management UI. `bindSettings` is kept as a thin shim so the existing
+  // initController wiring continues to work; the real logic lives in
+  // settingsModalController.js.
+  let settingsModalController = null;
   const bindSettings = () => {
-    if (elements.paletteKey) elements.paletteKey.value = paletteShortcut;
-    if (elements.restartKey) elements.restartKey.value = restartShortcut;
-
-    elements.saveSettings?.addEventListener("click", () => {
-      const pk = (elements.paletteKey?.value || "k").trim().toLowerCase();
-      const rk = (elements.restartKey?.value || "r").trim().toLowerCase();
-      paletteShortcut = pk || "k";
-      restartShortcut = rk || "r";
-      localStorage.setItem("omni-palette-key", paletteShortcut);
-      localStorage.setItem("omni-restart-key", restartShortcut);
-      if (elements.settingsStatus) elements.settingsStatus.textContent = "Settings saved.";
-    });
-
-    elements.resetSettings?.addEventListener("click", () => {
-      paletteShortcut = "k";
-      restartShortcut = "r";
-      localStorage.setItem("omni-palette-key", "k");
-      localStorage.setItem("omni-restart-key", "r");
-      if (elements.paletteKey) elements.paletteKey.value = "k";
-      if (elements.restartKey) elements.restartKey.value = "r";
-      if (elements.settingsStatus) elements.settingsStatus.textContent = "Reset to defaults.";
-    });
+    settingsModalController = modules.createSettingsModalController?.({
+      elements,
+      api,
+      onShortcutsSaved: ({ paletteKey, restartKey }) => {
+        paletteShortcut = paletteKey;
+        restartShortcut = restartKey;
+      },
+    }) || null;
+    settingsModalController?.bind();
   };
 
   /* ─── Workspace Search / Sort ─────────────────────────────────────── */
@@ -867,6 +884,7 @@ window.__omniRendererInitialized = false;
       setTerminalViewController: (next) => { terminalViewController = next; },
       getTerminalViewController: () => terminalViewController,
       setUiChromeController: (next) => { uiChromeController = next; },
+      getUiChromeController: () => uiChromeController,
       setDiagnosticsController: (next) => { diagnosticsController = next; },
       setBrowserTabsController: (next) => { browserTabsController = next; },
       setTerminalTabsController: (next) => { terminalTabsController = next; },
@@ -874,6 +892,7 @@ window.__omniRendererInitialized = false;
       setWorkspaceModalController: (next) => { workspaceModalController = next; },
       getWorkspaceModalController: () => workspaceModalController,
       setPreviewManager: (next) => { previewManager = next; },
+      getPreviewManager: () => previewManager,
       setQuickActionsController: (next) => { quickActionsController = next; },
       getQuickActionsController: () => quickActionsController,
       getSelectedWorkspaceId: () => selectedWorkspaceId,
@@ -928,6 +947,7 @@ window.__omniRendererInitialized = false;
       renderRestoreDiagnostics,
       scheduleWorkspaceUpdateFlush,
       setPendingWorkspacesPayload: (next) => { pendingWorkspacesPayload = next; },
+      applyWorkspacePatch,
       startAppPreviewWithRetry,
       getResolvedTheme,
       getActivePreviewFrame,

@@ -21,6 +21,7 @@
         setTerminalViewController,
         getTerminalViewController,
         setUiChromeController,
+        getUiChromeController,
         setDiagnosticsController,
         setBrowserTabsController,
         setTerminalTabsController,
@@ -28,6 +29,7 @@
         setWorkspaceModalController,
         getWorkspaceModalController,
         setPreviewManager,
+        getPreviewManager,
         setQuickActionsController,
         getQuickActionsController,
         getSelectedWorkspaceId,
@@ -145,6 +147,15 @@
         }) || null,
       );
 
+      // Start the global toast rail as early as possible so backend errors
+      // emitted during the rest of init show up instead of being dropped.
+      try {
+        const toast = modules.createToastController?.({ api });
+        await toast?.init?.();
+      } catch (err) {
+        console.warn("[omni/init] toastController failed", err);
+      }
+
       ctx.updateSidebarState();
       ctx.applyIdeRatio(getIdeRatio());
       ctx.applyLayoutMode();
@@ -243,6 +254,7 @@
           elements,
           getPaletteShortcut: ctx.getPaletteShortcut,
           getWorkspaces,
+          getSelectedWorkspaceId,
           setSelectedWorkspaceId: (workspaceId) => {
             setSelectedWorkspaceId(workspaceId);
           },
@@ -250,12 +262,67 @@
           onToggleSidebar: toggleSidebar,
           onOpenWorkspaceModal: openWorkspaceModal,
           focusWorkspace: async (workspaceId) => api.focusWorkspace(workspaceId),
+          restartWorkspace: api?.restartWorkspace
+            ? async (workspaceId) => {
+                await api.restartWorkspace(workspaceId);
+                await refresh({ loadActivity: true });
+              }
+            : null,
+          stopWorkspace: api?.stopWorkspace
+            ? async (workspaceId) => {
+                await api.stopWorkspace(workspaceId);
+                await refresh({ loadActivity: true });
+              }
+            : null,
+          onToggleTheme: () => getThemeController()?.cycleTheme?.(),
+          onToggleDevTools: () => api?.toggleDevTools?.(),
+          onSetLayoutMode: (mode) => {
+            getUiChromeController?.()?.setLayout?.(mode);
+          },
+          onSetFocusedSurface: (surface) => {
+            getUiChromeController?.()?.setSurface?.(surface);
+          },
+          onOpenDiagnosticsTab: (tabId) => {
+            const trigger = document.querySelector(`.bottom-panel-tab[data-tab="${tabId}"]`);
+            trigger?.click?.();
+          },
+          onDetectDevPort: async (workspaceId) => {
+            const preview = getPreviewManager?.();
+            if (!preview?.detectRunningDevPort || !api?.setAppPort) {
+              setStatus("Port auto-detect unavailable in this build.", true);
+              return;
+            }
+            setStatus("Scanning common dev ports…");
+            try {
+              const port = await preview.detectRunningDevPort({ timeoutMs: 1000 });
+              if (!port) {
+                setStatus("No dev server detected on common ports.", true);
+                return;
+              }
+              await api.setAppPort(workspaceId, port);
+              setStatus(`Detected dev server on port ${port}.`);
+              await refresh();
+            } catch (err) {
+              setStatus(`Detect failed: ${err?.message || "unknown error"}`, true);
+            }
+          },
         }) || null,
       );
       getQuickActionsController()?.bind();
 
       bindSettings();
       bindWorkspaceFilters();
+
+      // Vibe overlay opener — the overlay window is owned by main; we just
+      // ask main to show it. The global shortcut (Cmd/Ctrl+Shift+Space)
+      // still works as before.
+      elements.vibeOpen?.addEventListener("click", () => {
+        if (typeof api?.showVibe === "function") {
+          void api.showVibe().catch((err) => {
+            console.warn("[omni/init] showVibe failed", err);
+          });
+        }
+      });
 
       localStorage.removeItem("omni-focus-mode");
 
@@ -287,6 +354,12 @@
         ctx.setPendingWorkspacesPayload(payload);
         scheduleWorkspaceUpdateFlush();
       });
+
+      if (typeof api.onWorkspacePatch === "function" && typeof ctx.applyWorkspacePatch === "function") {
+        api.onWorkspacePatch((patch) => {
+          ctx.applyWorkspacePatch(patch);
+        });
+      }
 
       api.onTerminalData((workspaceId, terminalId, data) => {
         const key = terminalBufferKey(workspaceId, terminalId);

@@ -1,0 +1,38 @@
+{
+  "name": "omni-bridge",
+  "displayName": "Omni Bridge",
+  "description": "Omni BYOK bridge for language model chat and tools",
+  "version": "0.1.0",
+  "publisher": "omni",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "omniBridge.ask",
+        "title": "Omni Bridge: Ask"
+      },
+      {
+        "command": "omniBridge.toolCall",
+        "title": "Omni Bridge: Tool Call"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.7.3"
+  }
+}

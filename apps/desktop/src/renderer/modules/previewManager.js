@@ -146,12 +146,76 @@
       });
     };
 
+    /**
+     * Probe a curated list of common dev-server ports on localhost and
+     * return the first one responding to HEAD. Used by the preview UI to
+     * auto-suggest an app port when the user has not set one yet (e.g.
+     * right after `npm run dev` lights up on :5173 or :3000).
+     *
+     * Detection is conservative: HEAD with a 1.5s per-port timeout, stops
+     * at the first hit, and never probes privileged ports. Ports are
+     * ordered by framework popularity.
+     */
+    const COMMON_DEV_PORTS = [
+      3000, // Next.js, CRA, Express
+      5173, // Vite
+      8080, // webpack-dev-server, Vue CLI
+      4200, // Angular
+      4321, // Astro
+      8000, // Django, FastAPI, http.server
+      8888, // Jupyter
+      5000, // Flask
+      3333, // Remix / Solid
+      1234, // Parcel
+      9000, // PhpStorm / PHP builtin
+    ];
+
+    const detectRunningDevPort = async ({ timeoutMs = 1500, signal } = {}) => {
+      for (const port of COMMON_DEV_PORTS) {
+        if (signal?.aborted) return null;
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          const mergedSignal = signal
+            ? anySignal(controller.signal, signal)
+            : controller.signal;
+          const response = await fetchFn(`http://127.0.0.1:${port}/`, {
+            method: "HEAD",
+            signal: mergedSignal,
+          });
+          clearTimeout(timer);
+          // Any HTTP response — even 404 — means something is listening.
+          if (response && response.status < 500) return port;
+        } catch {
+          // no listener / timeout — try next port
+        }
+      }
+      return null;
+    };
+
+    // Minimal polyfill for `AbortSignal.any` which is not yet universally
+    // available in Electron's renderer.
+    const anySignal = (a, b) => {
+      if (typeof AbortSignal !== "undefined" && typeof AbortSignal.any === "function") {
+        return AbortSignal.any([a, b]);
+      }
+      const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      if (a.aborted || b.aborted) controller.abort();
+      else {
+        a.addEventListener("abort", onAbort, { once: true });
+        b.addEventListener("abort", onAbort, { once: true });
+      }
+      return controller.signal;
+    };
+
     return {
       stopAppPreviewRetry,
       renderPreviewLoading,
       renderPreviewNoPort,
       reskinPreviewPlaceholders,
       startAppPreviewWithRetry,
+      detectRunningDevPort,
     };
   };
 })();

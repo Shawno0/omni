@@ -20,9 +20,7 @@
   }) => {
     const applyTerminalBufferToViews = () => {
       const bottomTerm = getBottomTerm();
-      const focusedTerm = getFocusedTerm();
       bottomTerm?.reset();
-      focusedTerm?.reset();
 
       const selectedWorkspaceId = getSelectedWorkspaceId();
       const activeTerminalId = getActiveTerminalId();
@@ -34,7 +32,6 @@
       const buffered = getTerminalBufferByKey().get(key);
       if (buffered) {
         bottomTerm?.write(buffered);
-        focusedTerm?.write(buffered);
       }
     };
 

@@ -32,14 +32,19 @@
       const browserPane = elements.workspaceGrid?.querySelector(".surface-browser");
       const focusedTerm = elements.focusedTerminal;
       const focusedSurface = getFocusedSurface();
+      const isOverview = getLayoutMode() === "overview";
 
       document.querySelectorAll(".focused-surface-tab").forEach((tab) => {
-        tab.classList.toggle("active", tab.dataset.surface === focusedSurface);
+        tab.classList.toggle("active", !isOverview && tab.dataset.surface === focusedSurface);
       });
 
-      const showIde = focusedSurface === "ide";
-      const showPreview = focusedSurface === "preview";
-      const showTerminal = focusedSurface === "terminal";
+      // In overview mode no single surface is "active"; the grid shows all
+      // three side-by-side. In focused mode exactly one of
+      // ide/preview/terminal is toggled on. Keep this as the single source
+      // of truth for surface visibility so `applyLayoutMode` can delegate.
+      const showIde = !isOverview && focusedSurface === "ide";
+      const showPreview = !isOverview && focusedSurface === "preview";
+      const showTerminal = !isOverview && focusedSurface === "terminal";
 
       idePane?.classList.toggle("surface-active", showIde);
       browserPane?.classList.toggle("surface-active", showPreview);
@@ -49,6 +54,8 @@
         focusedTerm.classList.toggle("hidden", !showTerminal);
       }
 
+      // Hide the main grid only when the terminal takes full focus;
+      // otherwise it always renders (overview + focused ide/preview).
       if (showTerminal) {
         elements.workspaceGrid?.classList.add("hidden");
       } else if (getSelectedWorkspaceId()) {
@@ -67,47 +74,38 @@
 
       elements.layoutOverview?.classList.toggle("active", isOverview);
       elements.layoutFocused?.classList.toggle("active", !isOverview);
-
       elements.focusedSurfaceTabs?.classList.toggle("hidden", isOverview);
 
-      const idePane = elements.workspaceGrid?.querySelector(".surface-ide");
-      const browserPane = elements.workspaceGrid?.querySelector(".surface-browser");
-      const focusedTerm = elements.focusedTerminal;
+      // Always route through applyFocusedSurface so surface visibility
+      // stays consistent with the layout mode — no duplicated toggles.
+      applyFocusedSurface();
+    };
 
-      if (isOverview) {
-        idePane?.classList.remove("surface-active");
-        browserPane?.classList.remove("surface-active");
-        focusedTerm?.classList.remove("visible");
-        focusedTerm?.classList.add("hidden");
-        if (getSelectedWorkspaceId()) {
-          elements.workspaceGrid?.classList.remove("hidden");
-        }
+    const setLayout = (mode) => {
+      setLayoutMode(mode);
+      localStorage.setItem("omni-layout", mode);
+      applyLayoutMode();
+    };
+
+    const setSurface = (surface) => {
+      const next = surface || "ide";
+      setFocusedSurface(next);
+      localStorage.setItem("omni-focused-surface", next);
+      // Switching surface implies focused mode — promote automatically so
+      // users don't have to click Focused first. This matches the command
+      // palette "Layout: Focused (X)" actions.
+      if (getLayoutMode() !== "focused") {
+        setLayout("focused");
       } else {
         applyFocusedSurface();
       }
-
-      requestAnimationFrame(() => onFitTerminals?.());
     };
 
     const bindLayoutSwitcher = () => {
-      elements.layoutOverview?.addEventListener("click", () => {
-        setLayoutMode("overview");
-        localStorage.setItem("omni-layout", "overview");
-        applyLayoutMode();
-      });
-
-      elements.layoutFocused?.addEventListener("click", () => {
-        setLayoutMode("focused");
-        localStorage.setItem("omni-layout", "focused");
-        applyLayoutMode();
-      });
-
+      elements.layoutOverview?.addEventListener("click", () => setLayout("overview"));
+      elements.layoutFocused?.addEventListener("click", () => setLayout("focused"));
       document.querySelectorAll(".focused-surface-tab").forEach((tab) => {
-        tab.addEventListener("click", () => {
-          setFocusedSurface(tab.dataset.surface || "ide");
-          localStorage.setItem("omni-focused-surface", getFocusedSurface());
-          applyFocusedSurface();
-        });
+        tab.addEventListener("click", () => setSurface(tab.dataset.surface));
       });
     };
 
@@ -200,6 +198,8 @@
       applyFocusedSurface,
       applyLayoutMode,
       applyIdeRatio,
+      setLayout,
+      setSurface,
       bindLayoutSwitcher,
       bindSurfaceSplitter,
       bindPanelCardToggles,

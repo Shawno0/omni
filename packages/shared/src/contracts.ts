@@ -39,8 +39,88 @@ export interface ActivitySnapshot {
   sampledAt: number;
 }
 
+/**
+ * API-key providers Omni knows how to surface env vars for. The list is
+ * intentionally broad so any AI CLI wrapper launched inside a workspace
+ * (Claude Code, Codex, Aider, Cursor-CLI, Gemini-CLI, etc.) can pick up
+ * its expected env var without Omni needing per-tool glue.
+ */
+export const AI_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google",
+  "mistral",
+  "groq",
+  "deepseek",
+  "openrouter",
+  "xai",
+] as const;
+
+export type AiProvider = (typeof AI_PROVIDERS)[number];
+
+/** Metadata used by the settings UI to label + describe each provider. */
+export interface AiProviderMeta {
+  id: AiProvider;
+  label: string;
+  /** Env var name injected into workspace processes when the key is set. */
+  envVar: string;
+  /** Short hint about what CLIs / SDKs pick this key up. */
+  hint: string;
+}
+
+export const AI_PROVIDER_META: Record<AiProvider, AiProviderMeta> = {
+  anthropic: {
+    id: "anthropic",
+    label: "Anthropic",
+    envVar: "ANTHROPIC_API_KEY",
+    hint: "Claude Code, Anthropic SDK",
+  },
+  openai: {
+    id: "openai",
+    label: "OpenAI",
+    envVar: "OPENAI_API_KEY",
+    hint: "OpenAI Codex, Aider, OpenAI SDK",
+  },
+  google: {
+    id: "google",
+    label: "Google Gemini",
+    envVar: "GEMINI_API_KEY",
+    hint: "Gemini CLI, Google AI SDK",
+  },
+  mistral: {
+    id: "mistral",
+    label: "Mistral",
+    envVar: "MISTRAL_API_KEY",
+    hint: "Mistral CLI, le-chat-cli",
+  },
+  groq: {
+    id: "groq",
+    label: "Groq",
+    envVar: "GROQ_API_KEY",
+    hint: "Groq SDK, fast inference",
+  },
+  deepseek: {
+    id: "deepseek",
+    label: "DeepSeek",
+    envVar: "DEEPSEEK_API_KEY",
+    hint: "DeepSeek CLI / SDK",
+  },
+  openrouter: {
+    id: "openrouter",
+    label: "OpenRouter",
+    envVar: "OPENROUTER_API_KEY",
+    hint: "Aggregator — routes to many models",
+  },
+  xai: {
+    id: "xai",
+    label: "xAI (Grok)",
+    envVar: "XAI_API_KEY",
+    hint: "xAI SDK, Grok API",
+  },
+};
+
 export interface KeyRecord {
-  provider: "anthropic" | "openai";
+  provider: AiProvider;
   maskedValue: string;
   updatedAt: number;
 }

@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { app, safeStorage } from "electron";
+import { AI_PROVIDERS, type AiProvider } from "@omni/shared";
 
-type Provider = "anthropic" | "openai";
+type Provider = AiProvider;
 
 interface StoredKey {
   provider: Provider;
@@ -11,7 +12,7 @@ interface StoredKey {
 }
 
 interface StoredPayload {
-  keys: Record<Provider, StoredKey | undefined>;
+  keys: Partial<Record<Provider, StoredKey | undefined>>;
 }
 
 export class KeyVault {
@@ -61,14 +62,21 @@ export class KeyVault {
   private async read(): Promise<StoredPayload> {
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
-      return JSON.parse(raw) as StoredPayload;
+      const parsed = JSON.parse(raw) as StoredPayload;
+      // Older persisted payloads only carried anthropic+openai slots.
+      // Normalise to the full provider keyset so `list()` and `set()` work
+      // for newly added providers without needing a migration pass.
+      const keys: StoredPayload["keys"] = {};
+      for (const provider of AI_PROVIDERS) {
+        keys[provider] = parsed.keys?.[provider];
+      }
+      return { keys };
     } catch {
-      return {
-        keys: {
-          anthropic: undefined,
-          openai: undefined,
-        },
-      };
+      const keys: StoredPayload["keys"] = {};
+      for (const provider of AI_PROVIDERS) {
+        keys[provider] = undefined;
+      }
+      return { keys };
     }
   }
 

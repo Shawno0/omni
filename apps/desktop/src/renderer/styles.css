@@ -1401,6 +1401,19 @@ button {
   min-height: 0;
   overflow: hidden;
   background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Single-instance xterm host: a wrapper div that gets reparented between
+   the bottom-panel container and the focused-surface container on layout
+   change. Needs to fill its container so the xterm canvas has real size. */
+.xterm-container .xterm-host {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .xterm-container .xterm {
@@ -1647,6 +1660,70 @@ pre {
   border-top: 1px solid var(--border-subtle);
 }
 
+.workspace-modal-dropzone {
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  pointer-events: none;
+}
+
+.workspace-modal-dropzone.active {
+  border-color: var(--accent-primary);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.workspace-modal-recent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.workspace-modal-recent-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-tertiary);
+}
+
+.workspace-modal-recent-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.workspace-modal-recent-item button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-modal-recent-item button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
 /* --- Utility Classes -------------------------------------------------- */
 .hidden {
   display: none !important;
@@ -1669,6 +1746,174 @@ label {
 .app-shell.sidebar-collapsed #theme-toggle,
 .app-shell.sidebar-collapsed .sidebar-sections {
   display: none;
+}
+
+/* --- Settings Modal --------------------------------------------------- */
+.settings-modal-card {
+  width: min(680px, 94vw);
+  max-height: 86vh;
+  overflow: hidden;
+}
+
+.settings-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.settings-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: var(--sp-3) var(--sp-3);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.settings-tab:hover {
+  color: var(--text-primary);
+}
+
+.settings-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-primary);
+}
+
+.settings-modal-body {
+  padding: var(--sp-4);
+  overflow-y: auto;
+  max-height: calc(86vh - 120px);
+}
+
+.settings-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.settings-tab-panel[hidden] {
+  display: none;
+}
+
+.settings-panel-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.settings-provider-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.settings-provider-row {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  background: var(--bg-elevated, var(--bg-surface));
+}
+
+.settings-provider-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.settings-provider-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-provider-label strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.settings-provider-env {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-active);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  width: fit-content;
+}
+
+.settings-provider-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.settings-provider-state {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.settings-provider-state.saved {
+  color: var(--accent-primary);
+}
+
+.settings-provider-controls {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.settings-provider-controls input {
+  flex: 1;
+  min-width: 160px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.settings-provider-status {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-basis: 100%;
+  min-height: 14px;
+}
+
+.settings-provider-status[data-state="error"] {
+  color: var(--error, #f55);
+}
+
+.settings-provider-status[data-state="pending"] {
+  color: var(--text-secondary);
+}
+
+/* Header Vibe button — slightly emphasised to signal the "special" feature. */
+#vibe-open {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.14), rgba(236, 72, 153, 0.14));
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: var(--text-primary);
+}
+
+#vibe-open:hover {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.24), rgba(236, 72, 153, 0.24));
+  border-color: rgba(139, 92, 246, 0.55);
 }
 
 /* --- Responsive ------------------------------------------------------- */
